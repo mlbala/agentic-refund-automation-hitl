@@ -167,7 +167,10 @@ class RefundService:
         if status == db.REFUNDED:
             return f"Refunded ${amount} after approval by {refund['decided_by']}."
         if status == db.PENDING_APPROVAL:
-            return f"${amount} is over the ${self.threshold} threshold, so it is waiting for human approval."
+            return (
+                f"${amount} is above the ${self.threshold} auto-refund limit, "
+                "so it is waiting for human approval."
+            )
         if status == db.REJECTED:
             return f"Rejected by {refund['decided_by']}."
         if status == db.DECLINED:

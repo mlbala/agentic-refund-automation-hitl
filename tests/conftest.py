@@ -17,7 +17,7 @@ from refund_agent import db
 from refund_agent.graph import build_graph
 from refund_agent.service import RefundService
 
-THRESHOLD = Decimal("100.00")
+THRESHOLD = Decimal("99.99")  # the default: $100.00 and up need approval
 _call_ids = itertools.count(1)
 
 

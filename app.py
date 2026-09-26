@@ -16,7 +16,7 @@ from langchain.chat_models import init_chat_model
 
 from refund_agent import db
 from refund_agent.checkpointer import create_checkpointer, create_pool
-from refund_agent.config import load_settings
+from refund_agent.config import CENTS, load_settings
 from refund_agent.graph import build_graph
 from refund_agent.service import RefundService
 
@@ -74,6 +74,11 @@ def status_text(status: str) -> str:
     return f"{dot} {label}"
 
 
+def approval_starts_at(threshold: Decimal) -> str:
+    """Smallest amount that needs approval (amounts are whole cents), e.g. 99.99 -> $100.00."""
+    return money(threshold + CENTS)
+
+
 def invoice_label(invoice: dict) -> str:
     return (
         f"{invoice['invoice_id']} · {invoice['customer_name']} · "
@@ -103,7 +108,7 @@ def render_sidebar(threshold: Decimal) -> str:
 1. A refund request arrives for an invoice.
 2. The AI agent looks up the invoice, decides the amount and calls the refund tool.
 3. **{money(threshold)} or less** → refunded automatically (*straight-through processing*).
-4. **Over {money(threshold)}** → the agent pauses and waits here for a human (*maker-checker*).
+4. **{approval_starts_at(threshold)} or more** → the agent pauses and waits here for a human (*maker-checker*).
 5. Approve or reject: the paused agent resumes and finishes the job.
 
 The limits are enforced in code, so nothing in a customer message can bypass them.
@@ -170,7 +175,10 @@ def render_outcome(outcome: dict) -> None:
 
 def render_pending(service: RefundService, pending: list[dict], reviewer: str) -> None:
     if not pending:
-        st.info(f"Nothing is waiting for approval. Refunds over {money(service.threshold)} will appear here.")
+        st.info(
+            f"Nothing is waiting for approval. Refunds of {approval_starts_at(service.threshold)} "
+            "or more will appear here."
+        )
         return
 
     for i, r in enumerate(pending):
@@ -191,7 +199,11 @@ def render_pending(service: RefundService, pending: list[dict], reviewer: str) -
 """
                 )
             with request_col:
-                st.metric("Requested refund", money(r["amount"]), help=f"Threshold: {money(service.threshold)}")
+                st.metric(
+                    "Requested refund",
+                    money(r["amount"]),
+                    help=f"Approval needed from {approval_starts_at(service.threshold)}",
+                )
                 st.caption("Customer message (untrusted)")
                 st.text(r["customer_message"] or "—")
                 st.caption("Agent reason")

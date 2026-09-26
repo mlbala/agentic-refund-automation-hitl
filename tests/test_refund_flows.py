@@ -33,16 +33,27 @@ def test_small_refund_is_straight_through(make_service, invoice_status):
     assert invoice_status("INV-1001") == db.INVOICE_REFUNDED
 
 
-# 2
-def test_refund_exactly_at_threshold_is_stp(make_service, invoice_status):
+# 2 (boundary): $99.99 is the largest automatic refund, $100.00 already needs approval.
+def test_refund_at_threshold_is_stp(make_service, invoice_status):
+    service = make_service(refund_script("INV-1015", 99.99))
+
+    refund = service.submit_refund("INV-1015", "The earbuds keep disconnecting.")["refund"]
+
+    assert refund["status"] == db.REFUNDED
+    assert refund["processing_type"] == db.STP
+    assert refund["amount"] == Decimal("99.99")
+    assert invoice_status("INV-1015") == db.INVOICE_REFUNDED
+
+
+def test_refund_of_100_needs_approval(make_service, invoice_status):
     service = make_service(refund_script("INV-1003", 100.0))
 
     refund = service.submit_refund("INV-1003", "Headphones are too small.")["refund"]
 
-    assert refund["status"] == db.REFUNDED
-    assert refund["processing_type"] == db.STP
+    assert refund["status"] == db.PENDING_APPROVAL
+    assert refund["processing_type"] is None
     assert refund["amount"] == Decimal("100.00")
-    assert invoice_status("INV-1003") == db.INVOICE_REFUNDED
+    assert invoice_status("INV-1003") == db.PAID
 
 
 # 3
@@ -65,7 +76,7 @@ def test_large_refund_waits_for_approval_then_is_processed(make_service, invoice
         "customer_name": "Dev Patel",
         "invoice_amount": "250.00",
         "refund_amount": "250.00",
-        "threshold": "100.00",
+        "threshold": "99.99",
         "agent_reason": "Customer returned the item.",
     }
 

@@ -14,7 +14,7 @@ from urllib.parse import quote
 from dotenv import load_dotenv
 
 DEFAULT_LLM_MODEL = "openai:gpt-5-mini"
-DEFAULT_APPROVAL_THRESHOLD = "100"
+DEFAULT_APPROVAL_THRESHOLD = "99.99"  # amounts above this need approval, i.e. $100.00 and up
 DEFAULT_DB_PORT = "5432"
 DEFAULT_DB_SSLMODE = "require"
 REQUIRED_DB_VARS = ("DB_HOST", "DB_NAME", "DB_USER", "DB_PASSWORD")

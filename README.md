@@ -4,8 +4,8 @@ An AI refund desk built with a **LangGraph ReAct agent** and **human-in-the-loop
 
 A few terms from finance operations that this project demonstrates:
 
-- **Straight-through processing (STP):** a request is completed end to end with no human touch. Here, any refund of **$100.00 or less** is STP.
-- **Approval threshold:** the amount above which a person must sign off (`REFUND_APPROVAL_THRESHOLD`, default $100). Exactly $100.00 is still STP.
+- **Straight-through processing (STP):** a request is completed end to end with no human touch. Here, any refund of **$99.99 or less** is STP.
+- **Approval threshold:** the amount above which a person must sign off (`REFUND_APPROVAL_THRESHOLD`, default $99.99). So every refund of **$100.00 or more** needs approval, and $99.99 itself is still STP.
 - **Maker-checker:** one party prepares a transaction and a different party approves it. The AI is the *maker*: it validates the invoice and proposes the amount. The human reviewer is the *checker*.
 - **Exception-based approval:** people review only the exceptions (refunds over the threshold). Everything else flows through automatically, so reviewer time goes where the risk is.
 
@@ -17,8 +17,8 @@ All data and the agent's memory (LangGraph checkpoints) live in PostgreSQL. A re
 UI: new request (invoice + customer message)
   → service.submit_refund() creates refund row (status=submitted, refund_id=thread_id)
   → graph: agent → get_invoice → agent → issue_refund
-        amount ≤ 100 → processed (status=refunded, processing_type=stp, decided_by=ai-agent)
-        amount > 100 → status=pending_approval → interrupt(payload) → graph pauses (checkpoint in Postgres)
+        amount ≤ 99.99  → processed (status=refunded, processing_type=stp, decided_by=ai-agent)
+        amount ≥ 100.00 → status=pending_approval → interrupt(payload) → graph pauses (checkpoint in Postgres)
   → UI "Pending approval" tab: reviewer opens it, sees invoice + agent reason → Approve / Reject + note
   → service.decide_refund() → graph.invoke(Command(resume={...}), same thread_id)
         approved → status=refunded, processing_type=human_approved, decided_by=<reviewer>
@@ -55,13 +55,13 @@ Refund statuses: `submitted` → `pending_approval` → `deciding` → `refunded
 
 The `refunds` table starts **empty**: only `invoices` is seeded. The app writes to `refunds` as requests come in. Each *Submit to agent* click creates one row, and the row is updated as the refund moves along.
 
-Example: **INV-1010 · Jamal Wright · Portable SSD · $119.99**, which is over the $100 threshold.
+Example: **INV-1010 · Jamal Wright · Portable SSD · $119.99**, which is above the $99.99 threshold.
 
 | Step | What happens | The `refunds` row |
 |---|---|---|
 | 1. Submit | In the UI you pick INV-1010, type the customer's message and click *Submit to agent*. | New row: `refund_id = REF-3F9A1C2B`, `status = submitted`, `amount` empty |
 | 2. Look up | The agent calls `get_invoice`, which only reads `invoices`. | No change |
-| 3. Decide | The agent calls `issue_refund(119.99, reason)`. The code checks the rules and sees $119.99 > $100. | `amount = 119.99`, `agent_reason` set, `status = pending_approval` |
+| 3. Decide | The agent calls `issue_refund(119.99, reason)`. The code checks the rules and sees $119.99 > $99.99. | `amount = 119.99`, `agent_reason` set, `status = pending_approval` |
 | 4. Pause | `interrupt()` stops the agent and its state is saved in the `checkpoint*` tables. The refund appears in *Pending approval*. | No change. It can wait there for days, even across app restarts. |
 | 5. Claim | A reviewer clicks **Approve**. | `status = deciding`, a lock so a double click can't process it twice |
 | 6. Refund | The agent resumes and processes the refund in one transaction. | `status = refunded`, `processing_type = human_approved`, `decided_by = <reviewer>`, `reviewer_note`, `decided_at` and `processed_at` set. The invoice's `payment_status` becomes `refunded`. |
@@ -71,10 +71,11 @@ Each kind of request ends in a different final row:
 
 | Request | Example | Final `refunds` row | Invoice |
 |---|---|---|---|
-| ≤ $100 (STP) | INV-1009, $35.00 | `refunded`, `stp`, `decided_by = ai-agent` (steps 4 and 5 are skipped) | `refunded` |
-| Exactly $100 | INV-1038, $100.00 | `refunded`, `stp` | `refunded` |
-| > $100, approved | INV-1010, $119.99 | `refunded`, `human_approved`, reviewer name and note | `refunded` |
-| > $100, rejected | INV-1014, $549.00 | `rejected`, reviewer name and note, no `processed_at` | stays `paid` |
+| ≤ $99.99 (STP) | INV-1009, $35.00 | `refunded`, `stp`, `decided_by = ai-agent` (steps 4 and 5 are skipped) | `refunded` |
+| Exactly $99.99 | INV-1015, $99.99 | `refunded`, `stp` (the largest automatic refund) | `refunded` |
+| Exactly $100.00 | INV-1038, $100.00 | `pending_approval` until a reviewer decides (the smallest amount that needs approval) | stays `paid` until approved |
+| ≥ $100.00, approved | INV-1010, $119.99 | `refunded`, `human_approved`, reviewer name and note | `refunded` |
+| ≥ $100.00, rejected | INV-1014, $549.00 | `rejected`, reviewer name and note, no `processed_at` | stays `paid` |
 | Not eligible | INV-1018 (already refunded) | `declined`, `decided_by = ai-agent`, the reason in `agent_summary` | unchanged |
 | Error | e.g. the LLM is unreachable | `failed`, the error in `agent_summary` | unchanged |
 
@@ -128,7 +129,7 @@ uv run streamlit run app.py # opens http://localhost:8501
 | `REFUNDS_TABLE` | `refunds` | Optional app table name. LangGraph's checkpoint table names are fixed. |
 | `OPENAI_API_KEY` | `sk-…` | Needed by the default model |
 | `LLM_MODEL` | `openai:gpt-5-mini` | Any `init_chat_model` string, e.g. `anthropic:claude-sonnet-5` (install that provider's package) |
-| `REFUND_APPROVAL_THRESHOLD` | `100` | Amounts strictly above this need approval |
+| `REFUND_APPROVAL_THRESHOLD` | `99.99` | Amounts strictly above this need approval (`99.99` means $100.00 and up; set `100` to make $100.00 automatic) |
 | `LANGSMITH_TRACING`, `LANGSMITH_API_KEY` | `false` | Optional tracing |
 
 Prefer plain SQL? [scripts/schema.sql](scripts/schema.sql) creates the same tables (`invoices`, `refunds` and LangGraph's `checkpoints`, `checkpoint_blobs`, `checkpoint_writes`, `checkpoint_migrations`) and the demo invoices. Run it in psql or your provider's SQL console instead of `init_db.py`.
@@ -149,8 +150,8 @@ The other demo invoices give the same outcomes, plus the threshold edge cases:
 
 | Outcome | Invoices |
 |---|---|
-| Auto-refunded (STP) | INV-1009 ($35.00), INV-1015 ($99.99), INV-1038 ($100.00, exactly at the threshold) |
-| Needs approval | INV-1023 ($100.01, just over), INV-1010 ($119.99), INV-1014 ($549.00), INV-1027 ($1,299.00) |
+| Auto-refunded (STP) | INV-1009 ($35.00), INV-1015 ($99.99, the largest automatic refund) |
+| Needs approval | INV-1038 ($100.00, the smallest that needs approval), INV-1023 ($100.01), INV-1010 ($119.99), INV-1014 ($549.00), INV-1027 ($1,299.00) |
 | Declined, already refunded | INV-1018, INV-1029, INV-1037 |
 
 ## Running tests
@@ -161,7 +162,7 @@ uv run pytest
 
 The tests need no network, no real LLM and no Postgres. They use in-memory SQLite, LangGraph's `MemorySaver` and a scripted fake chat model (`GenericFakeChatModel` fed `AIMessage`s with `tool_calls`). They cover:
 
-- STP, including the exact $100.00 boundary
+- STP, and the $99.99 / $100.00 approval boundary
 - approve and reject
 - an already-refunded invoice, an amount above the invoice, and a different invoice than the request
 - a second refund for the same invoice

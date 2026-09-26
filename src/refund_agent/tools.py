@@ -128,7 +128,7 @@ def make_tools(engine: Engine, threshold: Decimal) -> list[BaseTool]:
 
         # 2 + 3a. Record the agent's decision. Compare-and-set on 'submitted', so the
         # re-run on resume (status is then 'deciding') writes nothing.
-        needs_approval = refund_amount > threshold  # rule 1: exactly the threshold is STP
+        needs_approval = refund_amount > threshold  # rule 1: strictly above; the threshold itself is STP
         with engine.begin() as conn:
             values = {"amount": refund_amount, "agent_reason": reason}
             if needs_approval:
