@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS refunds (
     refund_id         TEXT           NOT NULL PRIMARY KEY, -- REF-XXXXXXXX, also the LangGraph thread_id
     invoice_id        TEXT           NOT NULL REFERENCES invoices (invoice_id),
     customer_message  TEXT           NOT NULL,
+    requester_email   TEXT,                                -- who asked; must match the invoice's customer_email
     amount            NUMERIC(10, 2),                      -- set when the agent decides
     status            TEXT           NOT NULL,             -- submitted | pending_approval | deciding |
                                                            -- refunded | rejected | declined | failed
@@ -45,6 +46,9 @@ CREATE TABLE IF NOT EXISTS refunds (
     decided_at        TIMESTAMPTZ,
     processed_at      TIMESTAMPTZ
 );
+
+-- Databases created before requester_email existed: add it (no-op if it's already there).
+ALTER TABLE refunds ADD COLUMN IF NOT EXISTS requester_email TEXT;
 
 -- 60 demo invoices (existing rows are left alone). Generated from SEED_INVOICES in db.py.
 INSERT INTO invoices

@@ -18,6 +18,7 @@ from refund_agent.db import (
     create_tables,
     reset_demo_data,
     seed_invoices,
+    upgrade_schema,
 )
 
 
@@ -30,6 +31,8 @@ def main() -> None:
     engine = create_db_engine(settings.database_url)
 
     create_tables(engine)
+    for column in upgrade_schema(engine):  # columns added after the first release
+        print(f"Added column {column}.")
     print(f"App tables ready: {INVOICES_TABLE}, {REFUNDS_TABLE}.")
 
     with create_pool(settings.database_url) as pool:

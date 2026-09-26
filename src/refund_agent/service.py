@@ -12,6 +12,7 @@ Every action returns {"ok": bool, "message": str, "refund": dict | None}.
 
 import json
 import logging
+import re
 import secrets
 from collections.abc import Callable
 from datetime import date, datetime, time, timedelta, timezone
@@ -29,6 +30,7 @@ logger = logging.getLogger(__name__)
 RECURSION_LIMIT = 12
 # Stored when a request comes without a customer message; the agent then refunds the full amount.
 NO_CUSTOMER_MESSAGE = "(no customer message)"
+EMAIL_PATTERN = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
 
 
 def new_refund_id() -> str:
@@ -88,23 +90,33 @@ def _refusal_reason(messages: list) -> str:
 
 
 class RefundService:
-    def __init__(self, engine: Engine, graph: CompiledStateGraph, threshold: Decimal):
+    def __init__(
+        self,
+        engine: Engine,
+        graph: CompiledStateGraph,
+        threshold: Decimal,
+        refund_window_days: int | None = None,  # for display; the graph's tools enforce it
+    ):
         self.engine = engine
         self.graph = graph
         self.threshold = threshold
+        self.refund_window_days = refund_window_days
 
     # --- Actions -------------------------------------------------------------
 
-    def submit_refund(self, invoice_id: str, customer_message: str) -> dict:
-        """Create a refund request and run the agent on it right away."""
-        created = self._create_refund(invoice_id, customer_message, db.SUBMITTED)
+    def submit_refund(self, invoice_id: str, customer_message: str, requester_email: str | None = None) -> dict:
+        """Create a refund request and run the agent on it right away.
+
+        requester_email (optional) is who is asking; the agent refuses if it isn't the invoice's customer.
+        """
+        created = self._create_refund(invoice_id, customer_message, db.SUBMITTED, requester_email)
         if not created["ok"]:
             return created
         return self._run_agent(created["refund"])
 
-    def queue_refund(self, invoice_id: str, customer_message: str) -> dict:
+    def queue_refund(self, invoice_id: str, customer_message: str, requester_email: str | None = None) -> dict:
         """Save a refund request for the batch run (process_day). The agent doesn't see it yet."""
-        created = self._create_refund(invoice_id, customer_message, db.QUEUED)
+        created = self._create_refund(invoice_id, customer_message, db.QUEUED, requester_email)
         if created["ok"]:
             created["message"] = self.describe(created["refund"])
         return created
@@ -203,13 +215,20 @@ class RefundService:
 
     # --- Internals -------------------------------------------------------------
 
-    def _create_refund(self, invoice_id: str, customer_message: str, status: str) -> dict:
+    def _create_refund(
+        self, invoice_id: str, customer_message: str, status: str, requester_email: str | None = None
+    ) -> dict:
         customer_message = (customer_message or "").strip() or NO_CUSTOMER_MESSAGE
+        requester_email = (requester_email or "").strip().lower() or None
+        if requester_email and not EMAIL_PATTERN.fullmatch(requester_email):
+            return _result(False, f"'{requester_email}' is not a valid email address.")
         refund_id = new_refund_id()
         with self.engine.begin() as conn:
             if db.get_invoice(conn, invoice_id) is None:
                 return _result(False, f"Invoice {invoice_id} not found.")
-            db.insert_refund(conn, refund_id, invoice_id, customer_message, status=status)
+            db.insert_refund(
+                conn, refund_id, invoice_id, customer_message, status=status, requester_email=requester_email
+            )
             refund = db.get_refund(conn, refund_id)
         logger.info("Refund %s created for %s (%s)", refund_id, invoice_id, status)
         return _result(True, f"Refund {refund_id} created.", refund)

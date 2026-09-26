@@ -24,7 +24,9 @@ from sqlalchemy import (
     delete,
     func,
     insert,
+    inspect,
     select,
+    text,
     update,
 )
 from sqlalchemy.engine import Connection, Engine
@@ -84,6 +86,9 @@ refunds = Table(
     Column("refund_id", Text, primary_key=True),  # also the LangGraph thread_id
     Column("invoice_id", Text, ForeignKey(invoices.c.invoice_id), nullable=False),
     Column("customer_message", Text, nullable=False),
+    # Email given by whoever asked for the refund; must match the invoice's customer_email.
+    # NULL = entered by staff (e.g. bulk-queued), so there is no requester identity to check.
+    Column("requester_email", Text, nullable=True),
     Column("amount", Numeric(10, 2), nullable=True),  # set when the agent decides
     Column("status", Text, nullable=False),
     Column("processing_type", Text, nullable=True),
@@ -189,6 +194,20 @@ def create_tables(engine: Engine) -> None:
     metadata.create_all(engine)
 
 
+def upgrade_schema(engine: Engine) -> list[str]:
+    """Add columns introduced after the first release to existing tables. Returns what was added.
+
+    create_all() only creates missing tables; it never alters existing ones.
+    """
+    existing = {column["name"] for column in inspect(engine).get_columns(refunds.name)}
+    added = []
+    with engine.begin() as conn:
+        if "requester_email" not in existing:  # table names are validated identifiers (config.py)
+            conn.execute(text(f"ALTER TABLE {refunds.name} ADD COLUMN requester_email TEXT"))
+            added.append(f"{refunds.name}.requester_email")
+    return added
+
+
 def seed_invoices(engine: Engine) -> int:
     """Insert seed invoices that don't exist yet. Returns how many were added."""
     with engine.begin() as conn:
@@ -257,13 +276,19 @@ def get_refund(conn: Connection, refund_id: str) -> dict | None:
 
 
 def insert_refund(
-    conn: Connection, refund_id: str, invoice_id: str, customer_message: str, status: str = SUBMITTED
+    conn: Connection,
+    refund_id: str,
+    invoice_id: str,
+    customer_message: str,
+    status: str = SUBMITTED,
+    requester_email: str | None = None,
 ) -> None:
     conn.execute(
         insert(refunds).values(
             refund_id=refund_id,
             invoice_id=invoice_id,
             customer_message=customer_message,
+            requester_email=requester_email,
             status=status,
             created_at=utcnow(),
         )

@@ -42,8 +42,9 @@ def build_graph(
     checkpointer: BaseCheckpointSaver,
     engine: Engine,
     threshold: Decimal,
+    refund_window_days: int | None = None,
 ) -> CompiledStateGraph:
-    tools = make_tools(engine, threshold)
+    tools = make_tools(engine, threshold, refund_window_days)
     model = llm.bind_tools(tools, parallel_tool_calls=False)
 
     def agent(state: AgentState) -> dict:

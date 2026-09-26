@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 
 DEFAULT_LLM_MODEL = "openai:gpt-5-mini"
 DEFAULT_APPROVAL_THRESHOLD = "99.99"  # amounts above this need approval, i.e. $100.00 and up
+DEFAULT_REFUND_WINDOW_DAYS = 30  # invoices older than this can't be refunded; 0 disables the check
 DEFAULT_DB_PORT = "5432"
 DEFAULT_DB_SSLMODE = "require"
 REQUIRED_DB_VARS = ("DB_HOST", "DB_NAME", "DB_USER", "DB_PASSWORD")
@@ -31,11 +32,12 @@ class Settings:
     database_url: str
     llm_model: str
     approval_threshold: Decimal
+    refund_window_days: int | None  # None = no return window
 
     def __repr__(self) -> str:  # keep the connection string out of logs and tracebacks
         return (
             f"Settings(database_url='***', llm_model={self.llm_model!r}, "
-            f"approval_threshold={self.approval_threshold})"
+            f"approval_threshold={self.approval_threshold}, refund_window_days={self.refund_window_days})"
         )
 
 
@@ -47,7 +49,18 @@ def load_settings() -> Settings:
         approval_threshold=to_money(
             os.environ.get("REFUND_APPROVAL_THRESHOLD", "").strip() or DEFAULT_APPROVAL_THRESHOLD
         ),
+        refund_window_days=refund_window_days(os.environ),
     )
+
+
+def refund_window_days(env: Mapping[str, str]) -> int | None:
+    """REFUND_WINDOW_DAYS: how many days after the invoice date a refund is allowed (0 = no limit)."""
+    raw = env.get("REFUND_WINDOW_DAYS", "").strip()
+    if not raw:
+        return DEFAULT_REFUND_WINDOW_DAYS
+    if not raw.isdigit():
+        raise RuntimeError(f"REFUND_WINDOW_DAYS must be a whole number of days (0 = no limit), got {raw!r}.")
+    return int(raw) or None
 
 
 def build_database_url(env: Mapping[str, str]) -> str:

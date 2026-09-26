@@ -49,8 +49,8 @@ def get_service() -> RefundService:
     pool = create_pool(settings.database_url)
     checkpointer = create_checkpointer(pool)
     llm = init_chat_model(settings.llm_model)
-    graph = build_graph(llm, checkpointer, engine, settings.approval_threshold)
-    return RefundService(engine, graph, settings.approval_threshold)
+    graph = build_graph(llm, checkpointer, engine, settings.approval_threshold, settings.refund_window_days)
+    return RefundService(engine, graph, settings.approval_threshold, settings.refund_window_days)
 
 
 # --- Formatting helpers ------------------------------------------------------------
@@ -121,7 +121,7 @@ def flash(ok: bool, message: str) -> None:
 # --- Page sections -------------------------------------------------------------------
 
 
-def render_sidebar(threshold: Decimal) -> str:
+def render_sidebar(threshold: Decimal, refund_window_days: int | None) -> str:
     with st.sidebar:
         st.header("Reviewer")
         reviewer = st.text_input(
@@ -133,7 +133,9 @@ def render_sidebar(threshold: Decimal) -> str:
         if not reviewer:
             st.caption("Enter your name to approve or decline refunds.")
         st.divider()
-        st.metric("Approval threshold", money(threshold))
+        threshold_col, window_col = st.columns(2)
+        threshold_col.metric("Approval threshold", money(threshold))
+        window_col.metric("Return window", f"{refund_window_days} days" if refund_window_days else "None")
         st.subheader("How it works")
         st.markdown(
             f"""
@@ -144,7 +146,10 @@ def render_sidebar(threshold: Decimal) -> str:
 4. **{approval_starts_at(threshold)} or more** → the agent pauses and waits for a human (*maker-checker*).
 5. **Approve** or **Decline** with a reason: the paused agent resumes and finishes the job.
 
-The limits are enforced in code, so nothing in a customer message can bypass them.
+**Guardrails**, enforced in code, so nothing in a customer message can bypass them:
+the invoice must be paid and not already refunded, one refund per invoice, amount ≤ invoice,
+{f"requested within {refund_window_days} days of the invoice date" if refund_window_days else "no return window"},
+and a customer email, when given, must match the invoice.
 """
         )
         if st.button("Refresh", icon="🔄"):
@@ -214,6 +219,11 @@ def render_new_request(service: RefundService) -> None:
         return
     with st.form("new_request", clear_on_submit=True):
         invoice_id = st.selectbox("Invoice", list(invoices), format_func=lambda i: invoice_label(invoices[i]))
+        requester_email = st.text_input(
+            "Customer email (optional)",
+            placeholder="e.g. alice.martin@example.com",
+            help="Who is asking. If given, it must match the invoice's customer email, or the agent declines.",
+        )
         message = st.text_area(
             "Customer message (optional)",
             placeholder="e.g. The monitor arrived with dead pixels. I'd like a refund, please.",
@@ -226,9 +236,9 @@ def render_new_request(service: RefundService) -> None:
     if process_now or add_to_queue:
         if process_now:
             with st.spinner("Agent is processing…"):
-                outcome = service.submit_refund(invoice_id, message)
+                outcome = service.submit_refund(invoice_id, message, requester_email)
         else:
-            outcome = service.queue_refund(invoice_id, message)
+            outcome = service.queue_refund(invoice_id, message, requester_email)
         st.session_state["last_outcome"] = outcome
         st.session_state["active_tab"] = tab_for(outcome["refund"])
         st.rerun()  # refresh metrics and tabs with the new state
@@ -352,6 +362,8 @@ def render_pending(service: RefundService, pending: list[dict], reviewer: str) -
                     money(r["amount"]),
                     help=f"Approval needed from {approval_starts_at(service.threshold)}",
                 )
+                st.caption("Requested by")
+                st.text(r["requester_email"] or "Staff (no customer email given)")
                 st.caption("Customer message (untrusted)")
                 st.text(r["customer_message"] or "—")
                 st.caption("Agent reason")
@@ -446,6 +458,7 @@ def render_processed(processed: list[dict]) -> None:
                 "Amount": money(r["amount"]),
                 "Status": status_text(r["status"]),
                 "Processing": PROCESSING_LABELS.get(r["processing_type"], "—"),
+                "Requested by": r["requester_email"] or "staff",
                 "Decided by": r["decided_by"] or "—",
                 "Reason": decision_reason(r),
                 "Decided at": when(r["decided_at"]),
@@ -477,7 +490,7 @@ def main() -> None:
         st.error(f"Could not start the app: {type(exc).__name__}: {exc}")
         st.stop()
 
-    reviewer = render_sidebar(service.threshold)
+    reviewer = render_sidebar(service.threshold, service.refund_window_days)
     render_flash()
     render_metrics(service)
     st.divider()

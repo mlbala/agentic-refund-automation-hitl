@@ -6,6 +6,7 @@ effects (money moving) happen only after the human decision.
 """
 
 import logging
+from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 
 from langchain_core.runnables import RunnableConfig
@@ -44,14 +45,20 @@ def _invoice_for_llm(invoice: dict) -> dict:
     }
 
 
+def _utc_date(value: datetime) -> date:
+    """Calendar date in UTC (SQLite returns naive datetimes, which we always store as UTC)."""
+    return value.date() if value.tzinfo is None else value.astimezone(timezone.utc).date()
+
+
 def _check_rules(
     refund: dict | None,
     invoice_id: str,
     invoice: dict | None,
     blocking: dict | None,
     amount: Decimal,
+    refund_window_days: int | None = None,
 ) -> str | None:
-    """Business rules 2-5. Returns the reason for refusal, or None if the refund is allowed."""
+    """Business rules and guardrails. Returns the reason for refusal, or None if the refund is allowed."""
     if refund is None:
         return "this refund request does not exist."
     if invoice_id != refund["invoice_id"]:  # rule 2
@@ -60,6 +67,19 @@ def _check_rules(
         return f"invoice {invoice_id} does not exist."
     if invoice["payment_status"] != db.PAID:
         return f"invoice {invoice_id} is '{invoice['payment_status']}', not 'paid'."
+    # Guardrail: the person asking must be the invoice's customer (when the request says who asked).
+    requester = (refund.get("requester_email") or "").strip().lower()
+    if requester and requester != invoice["customer_email"].strip().lower():
+        return f"the requester's email does not match the customer email on invoice {invoice_id}."
+    # Guardrail: return window, measured when the refund was requested, so a slow approval
+    # doesn't push a valid request out of the window.
+    if refund_window_days is not None:
+        age = (_utc_date(refund["created_at"]) - invoice["invoice_date"]).days
+        if age > refund_window_days:
+            return (
+                f"invoice {invoice_id} is from {invoice['invoice_date']:%Y-%m-%d}, {age} days before the "
+                f"request; refunds are only allowed within {refund_window_days} days."
+            )
     if blocking is not None:  # rule 4
         return (
             f"invoice {invoice_id} already has refund {blocking['refund_id']} "
@@ -72,8 +92,9 @@ def _check_rules(
     return None
 
 
-def make_tools(engine: Engine, threshold: Decimal) -> list[BaseTool]:
-    """Build the agent's tools, bound to a database engine and the approval threshold."""
+def make_tools(engine: Engine, threshold: Decimal, refund_window_days: int | None = None) -> list[BaseTool]:
+    """Build the agent's tools, bound to a database engine, the approval threshold and the
+    return window (None = no window)."""
 
     @tool
     def get_invoice(invoice_id: str, config: RunnableConfig) -> dict:
@@ -121,7 +142,7 @@ def make_tools(engine: Engine, threshold: Decimal) -> list[BaseTool]:
             blocking = db.find_blocking_refund(conn, invoice_id, exclude_refund_id=refund_id)
         if refund is not None and refund["status"] not in OPEN_STATUSES:
             return f"Refund {refund_id} is already {refund['status']}. Nothing was changed."
-        refusal = _check_rules(refund, invoice_id, invoice, blocking, refund_amount)
+        refusal = _check_rules(refund, invoice_id, invoice, blocking, refund_amount, refund_window_days)
         if refusal:
             logger.info("Refund %s refused: %s", refund_id, refusal)
             return f"Refused: {refusal} Nothing was changed."
