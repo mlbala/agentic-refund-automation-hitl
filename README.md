@@ -112,6 +112,17 @@ uv run python scripts/init_db.py
 uv run streamlit run app.py # opens http://localhost:8501
 ```
 
+**Using pip instead of uv?** [requirements.txt](requirements.txt) pins the same versions as `uv.lock`, and installs this project's package with `-e .`. Run these from the repo root:
+
+```bash
+python3.12 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+python scripts/init_db.py
+streamlit run app.py
+```
+
+After changing dependencies, regenerate it with `uv export --format requirements-txt --no-hashes --no-dev -o requirements.txt`.
+
 **Created the tables yourself** (with [scripts/schema.sql](scripts/schema.sql) in a SQL console)? Then skip `init_db.py` and go straight to `uv run streamlit run app.py`. Running `init_db.py` anyway is harmless: it only adds whatever is missing, such as demo invoices you didn't insert.
 
 `.env` settings:
