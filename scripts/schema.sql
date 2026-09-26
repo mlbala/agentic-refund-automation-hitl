@@ -6,8 +6,10 @@
 --   psql "host=<host> port=<port> dbname=refund_automation user=<user> sslmode=require" -f scripts/schema.sql
 --
 -- App tables:        invoices, refunds
+--                    (default names; if you set INVOICES_TABLE / REFUNDS_TABLE in .env,
+--                    replace "invoices" / "refunds" below with the same names)
 -- LangGraph tables:  checkpoints, checkpoint_blobs, checkpoint_writes, checkpoint_migrations
---                    (the agent's saved state; this is what lets a paused refund survive restarts)
+--                    (fixed names; the agent's saved state, which lets a paused refund survive restarts)
 
 BEGIN;
 

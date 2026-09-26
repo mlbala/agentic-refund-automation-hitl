@@ -4,7 +4,7 @@ import pytest
 from psycopg.conninfo import conninfo_to_dict
 from sqlalchemy.engine import make_url
 
-from refund_agent.config import build_database_url, sqlalchemy_url
+from refund_agent.config import build_database_url, sqlalchemy_url, table_name
 
 DB_ENV = {
     "DB_HOST": "db.example.com",
@@ -46,3 +46,15 @@ def test_database_url_overrides_db_settings():
     url = "postgresql://other:pw@other-host:5432/otherdb?sslmode=disable"
 
     assert build_database_url(DB_ENV | {"DATABASE_URL": url}) == url
+
+
+def test_table_name_defaults_and_overrides():
+    assert table_name({}, "REFUNDS_TABLE", "refunds") == "refunds"
+    assert table_name({"REFUNDS_TABLE": "  "}, "REFUNDS_TABLE", "refunds") == "refunds"
+    assert table_name({"REFUNDS_TABLE": "demo_refunds_v2"}, "REFUNDS_TABLE", "refunds") == "demo_refunds_v2"
+
+
+@pytest.mark.parametrize("bad", ["Refunds", "refunds; DROP TABLE invoices", "public.refunds", "1refunds", "r" * 64])
+def test_table_name_rejects_unsafe_or_mixed_case_names(bad):
+    with pytest.raises(RuntimeError, match="REFUNDS_TABLE"):
+        table_name({"REFUNDS_TABLE": bad}, "REFUNDS_TABLE", "refunds")

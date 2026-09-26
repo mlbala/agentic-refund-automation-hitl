@@ -11,7 +11,14 @@ import argparse
 
 from refund_agent.checkpointer import create_checkpointer, create_pool
 from refund_agent.config import load_settings
-from refund_agent.db import create_db_engine, create_tables, reset_demo_data, seed_invoices
+from refund_agent.db import (
+    INVOICES_TABLE,
+    REFUNDS_TABLE,
+    create_db_engine,
+    create_tables,
+    reset_demo_data,
+    seed_invoices,
+)
 
 
 def main() -> None:
@@ -23,7 +30,7 @@ def main() -> None:
     engine = create_db_engine(settings.database_url)
 
     create_tables(engine)
-    print("App tables ready: invoices, refunds.")
+    print(f"App tables ready: {INVOICES_TABLE}, {REFUNDS_TABLE}.")
 
     with create_pool(settings.database_url) as pool:
         checkpointer = create_checkpointer(pool)

@@ -83,6 +83,8 @@ uv run streamlit run app.py
 | `DB_PASSWORD` | `…` | Any characters; it's URL-encoded for you |
 | `DB_SSLMODE` | `require` | Optional, defaults to `require` |
 | `DATABASE_URL` | `postgresql://refund_app:<password>@<host>:5432/refunds?sslmode=require` | Optional; a full URL that overrides the `DB_*` values |
+| `INVOICES_TABLE` | `invoices` | Optional app table name (lowercase letters, digits, `_`) |
+| `REFUNDS_TABLE` | `refunds` | Optional app table name. LangGraph's checkpoint table names are fixed. |
 | `OPENAI_API_KEY` | `sk-…` | Needed by the default model |
 | `LLM_MODEL` | `openai:gpt-5-mini` | Any `init_chat_model` string, e.g. `anthropic:claude-sonnet-5` (install that provider's package) |
 | `REFUND_APPROVAL_THRESHOLD` | `100` | Amounts strictly above this need approval |

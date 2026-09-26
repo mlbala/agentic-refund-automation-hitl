@@ -29,7 +29,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.engine import Connection, Engine
 
-from .config import sqlalchemy_url
+from .config import load_table_names, sqlalchemy_url
 
 # Refund statuses: submitted -> pending_approval -> deciding -> refunded | rejected,
 # plus declined (agent found it ineligible) and failed (error).
@@ -54,10 +54,13 @@ AI_AGENT = "ai-agent"
 PAID = "paid"
 INVOICE_REFUNDED = "refunded"
 
+# Table names come from .env (INVOICES_TABLE, REFUNDS_TABLE); defaults: invoices, refunds.
+INVOICES_TABLE, REFUNDS_TABLE = load_table_names()
+
 metadata = MetaData()
 
 invoices = Table(
-    "invoices",
+    INVOICES_TABLE,
     metadata,
     Column("invoice_id", Text, primary_key=True),
     Column("customer_name", Text, nullable=False),
@@ -71,10 +74,10 @@ invoices = Table(
 )
 
 refunds = Table(
-    "refunds",
+    REFUNDS_TABLE,
     metadata,
     Column("refund_id", Text, primary_key=True),  # also the LangGraph thread_id
-    Column("invoice_id", Text, ForeignKey("invoices.invoice_id"), nullable=False),
+    Column("invoice_id", Text, ForeignKey(invoices.c.invoice_id), nullable=False),
     Column("customer_message", Text, nullable=False),
     Column("amount", Numeric(10, 2), nullable=True),  # set when the agent decides
     Column("status", Text, nullable=False),

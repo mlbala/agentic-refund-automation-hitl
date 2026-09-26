@@ -5,6 +5,7 @@ never printed or logged.
 """
 
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
@@ -17,6 +18,11 @@ DEFAULT_APPROVAL_THRESHOLD = "100"
 DEFAULT_DB_PORT = "5432"
 DEFAULT_DB_SSLMODE = "require"
 REQUIRED_DB_VARS = ("DB_HOST", "DB_NAME", "DB_USER", "DB_PASSWORD")
+DEFAULT_INVOICES_TABLE = "invoices"
+DEFAULT_REFUNDS_TABLE = "refunds"
+# Lowercase only: Postgres folds unquoted names to lowercase, so "Invoices" would silently
+# point at a different table than one created with CREATE TABLE Invoices.
+TABLE_NAME_PATTERN = re.compile(r"[a-z_][a-z0-9_]{0,62}")
 CENTS = Decimal("0.01")
 
 
@@ -68,6 +74,25 @@ def build_database_url(env: Mapping[str, str]) -> str:
     return (
         f"postgresql://{quote(user, safe='')}:{quote(password, safe='')}@{host}:{port}/"
         f"{quote(name, safe='')}?sslmode={quote(sslmode, safe='')}"
+    )
+
+
+def table_name(env: Mapping[str, str], var: str, default: str) -> str:
+    """An app table name from the environment, e.g. INVOICES_TABLE=invoices."""
+    name = env.get(var, "").strip() or default
+    if not TABLE_NAME_PATTERN.fullmatch(name):
+        raise RuntimeError(
+            f"{var} must be a lowercase table name (letters, digits and _, max 63 chars), got {name!r}."
+        )
+    return name
+
+
+def load_table_names() -> tuple[str, str]:
+    """(invoices table, refunds table) from .env / the environment."""
+    load_dotenv()
+    return (
+        table_name(os.environ, "INVOICES_TABLE", DEFAULT_INVOICES_TABLE),
+        table_name(os.environ, "REFUNDS_TABLE", DEFAULT_REFUNDS_TABLE),
     )
 
 
