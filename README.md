@@ -112,16 +112,17 @@ uv run python scripts/init_db.py
 uv run streamlit run app.py # opens http://localhost:8501
 ```
 
-**Using pip instead of uv?** [requirements.txt](requirements.txt) pins the same versions as `uv.lock`, and installs this project's package with `-e .`. Run these from the repo root:
+**Prefer a requirements file?** [requirements.txt](requirements.txt) lists only the libraries the app needs directly, plus `-e .` for this project's own code. Run these from the repo root:
 
 ```bash
-python3.12 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+uv venv --python 3.12
+uv pip install -r requirements.txt
+source .venv/bin/activate
 python scripts/init_db.py
 streamlit run app.py
 ```
 
-After changing dependencies, regenerate it with `uv export --format requirements-txt --no-hashes --no-dev -o requirements.txt`.
+`uv sync` is still the recommended route, because it installs the exact tested versions from `uv.lock`. If you add a library with `uv add`, add it to `requirements.txt` too.
 
 **Created the tables yourself** (with [scripts/schema.sql](scripts/schema.sql) in a SQL console)? Then skip `init_db.py` and go straight to `uv run streamlit run app.py`. Running `init_db.py` anyway is harmless: it only adds whatever is missing, such as demo invoices you didn't insert.
 
