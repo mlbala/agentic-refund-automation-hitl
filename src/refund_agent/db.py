@@ -31,8 +31,11 @@ from sqlalchemy.engine import Connection, Engine
 
 from .config import load_table_names, sqlalchemy_url
 
-# Refund statuses: submitted -> pending_approval -> deciding -> refunded | rejected,
+# Refund statuses: [queued ->] submitted -> pending_approval -> deciding -> refunded | rejected,
 # plus declined (agent found it ineligible) and failed (error).
+# queued: saved for the daily batch run; the agent hasn't seen it yet.
+# rejected: declined by a human reviewer (the UI shows it as "Declined (reviewer)").
+QUEUED = "queued"
 SUBMITTED = "submitted"
 PENDING_APPROVAL = "pending_approval"
 DECIDING = "deciding"
@@ -212,13 +215,15 @@ def get_refund(conn: Connection, refund_id: str) -> dict | None:
     return _one(conn, select(refunds).where(refunds.c.refund_id == refund_id))
 
 
-def insert_refund(conn: Connection, refund_id: str, invoice_id: str, customer_message: str) -> None:
+def insert_refund(
+    conn: Connection, refund_id: str, invoice_id: str, customer_message: str, status: str = SUBMITTED
+) -> None:
     conn.execute(
         insert(refunds).values(
             refund_id=refund_id,
             invoice_id=invoice_id,
             customer_message=customer_message,
-            status=SUBMITTED,
+            status=status,
             created_at=utcnow(),
         )
     )
@@ -267,8 +272,17 @@ def find_blocking_refund(conn: Connection, invoice_id: str, exclude_refund_id: s
     )
 
 
-def list_refunds_with_invoice(conn: Connection, statuses: Iterable[str], newest_first: bool) -> list[dict]:
-    """Refund rows joined with their invoice details (invoice amount as invoice_amount)."""
+def list_refunds_with_invoice(
+    conn: Connection,
+    statuses: Iterable[str],
+    newest_first: bool,
+    created_from: datetime | None = None,
+    created_before: datetime | None = None,
+) -> list[dict]:
+    """Refund rows joined with their invoice details (invoice amount as invoice_amount).
+
+    created_from / created_before optionally limit the rows to a time window (e.g. one day).
+    """
     sort_key = func.coalesce(refunds.c.decided_at, refunds.c.created_at)
     stmt = (
         select(
@@ -286,6 +300,10 @@ def list_refunds_with_invoice(conn: Connection, statuses: Iterable[str], newest_
         .where(refunds.c.status.in_(list(statuses)))
         .order_by(sort_key.desc() if newest_first else refunds.c.created_at.asc())
     )
+    if created_from is not None:
+        stmt = stmt.where(refunds.c.created_at >= created_from)
+    if created_before is not None:
+        stmt = stmt.where(refunds.c.created_at < created_before)
     return [dict(row) for row in conn.execute(stmt).mappings()]
 
 

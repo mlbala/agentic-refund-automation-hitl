@@ -168,7 +168,7 @@ def make_tools(engine: Engine, threshold: Decimal) -> list[BaseTool]:
                     )
                 if not changed:
                     return f"Refund {refund_id} was already decided. Nothing was changed."
-                return f"Rejected by {reviewer}: {note or '(no note)'}"
+                return f"Declined by {reviewer}: {note or '(no reason given)'}"
             decided_by, processing_type, expected_status = reviewer, db.HUMAN_APPROVED, db.DECIDING
         else:
             # 4. Straight-through processing.

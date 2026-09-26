@@ -4,11 +4,15 @@ No network, no real LLM and no Postgres are needed.
 """
 
 import itertools
+import json
+import re
 from decimal import Decimal
 
 import pytest
+from langchain_core.language_models import BaseChatModel
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.outputs import ChatGeneration, ChatResult
 from langgraph.checkpoint.memory import MemorySaver
 from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
@@ -32,6 +36,31 @@ class ScriptedChatModel(GenericFakeChatModel):
             return super()._generate(*args, **kwargs)
         except StopIteration:
             raise RuntimeError("scripted LLM has no more replies") from None
+
+
+class FullRefundChatModel(BaseChatModel):
+    """Follows the system prompt for whatever invoice the request names: look it up, refund the
+    full amount, then summarise. Works for any number of requests in any order (batch runs)."""
+
+    @property
+    def _llm_type(self) -> str:
+        return "full-refund-fake"
+
+    def bind_tools(self, tools, **kwargs):
+        return self
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        request = next(m for m in messages if isinstance(m, HumanMessage)).text
+        invoice_id = re.search(r"for invoice (INV-\d+)", request).group(1)
+        results = [m for m in messages if isinstance(m, ToolMessage)]
+        if not results:
+            reply = call("get_invoice", invoice_id=invoice_id)
+        elif len(results) == 1:
+            amount = float(json.loads(results[0].text)["amount"])
+            reply = call("issue_refund", invoice_id=invoice_id, amount=amount, reason="Customer returned the item.")
+        else:
+            reply = AIMessage(f"Outcome: {results[-1].text}")
+        return ChatResult(generations=[ChatGeneration(message=reply)])
 
 
 def call(tool_name: str, **args) -> AIMessage:
@@ -86,6 +115,13 @@ def make_service(engine, checkpointer):
         return RefundService(engine, graph, THRESHOLD)
 
     return _make
+
+
+@pytest.fixture
+def batch_service(engine, checkpointer) -> RefundService:
+    """A RefundService whose LLM handles any request (see FullRefundChatModel)."""
+    graph = build_graph(FullRefundChatModel(), checkpointer, engine, THRESHOLD)
+    return RefundService(engine, graph, THRESHOLD)
 
 
 @pytest.fixture

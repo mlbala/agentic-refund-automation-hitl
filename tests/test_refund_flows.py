@@ -2,6 +2,7 @@
 
 from decimal import Decimal
 
+import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 
 from refund_agent import db
@@ -108,7 +109,8 @@ def test_rejected_refund_keeps_invoice_paid(make_service, invoice_status):
     assert refund["decided_at"] is not None
     assert refund["processed_at"] is None
     assert invoice_status("INV-1004") == db.PAID
-    assert "Rejected by Sam: Outside the return window." in tool_results(service, refund_id)
+    assert "Declined by Sam: Outside the return window." in tool_results(service, refund_id)
+    assert out["message"] == "Declined by Sam: Outside the return window."
     assert service.metrics()["rejected"] == 1
 
 
@@ -124,6 +126,9 @@ def test_already_refunded_invoice_is_declined(make_service, invoice_status):
     assert refund["amount"] is None  # a refusal changes nothing
     assert refund["agent_summary"] == "This invoice was already refunded."
     assert any("not 'paid'" in text for text in tool_results(service, refund["refund_id"]))
+    # The decline reason comes from the rules code, not from the LLM's text.
+    assert refund["agent_reason"] == "invoice INV-1008 is 'refunded', not 'paid'."
+    assert out["message"] == "Declined by the agent: invoice INV-1008 is 'refunded', not 'paid'."
 
 
 # 6
@@ -154,6 +159,7 @@ def test_agent_cannot_refund_a_different_invoice(make_service, invoice_status):
     assert refund["status"] == db.DECLINED
     assert "Only invoice INV-1001" in results[0]  # get_invoice is scoped to the request too
     assert "only invoice INV-1001" in results[1]
+    assert refund["agent_reason"] == "only invoice INV-1001, attached to this request, can be refunded."
     assert invoice_status("INV-1001") == db.PAID
     assert invoice_status("INV-1002") == db.PAID
 
@@ -197,7 +203,7 @@ def test_decide_twice_processes_only_once(make_service, invoice_status):
     service = make_service(refund_script("INV-1005", 420.0))
     refund_id = service.submit_refund("INV-1005", "Chair arrived broken.")["refund"]["refund_id"]
 
-    first = service.decide_refund(refund_id, approved=True, reviewer="Sam")
+    first = service.decide_refund(refund_id, approved=True, reviewer="Sam", note="Damage confirmed.")
     second = service.decide_refund(refund_id, approved=False, reviewer="Alex", note="No.")
 
     assert first["ok"]
@@ -217,7 +223,7 @@ def test_concurrent_claim_lets_only_one_reviewer_resume(make_service, engine):
     with engine.begin() as conn:  # another reviewer's click claimed it a moment earlier
         assert db.update_refund(conn, refund_id, only_if_status=db.PENDING_APPROVAL, status=db.DECIDING)
 
-    out = service.decide_refund(refund_id, approved=True, reviewer="Alex")
+    out = service.decide_refund(refund_id, approved=True, reviewer="Alex", note="Looks fine.")
 
     assert not out["ok"]
     assert "already decided" in out["message"]
@@ -234,7 +240,7 @@ def test_restart_resumes_with_a_new_graph(make_service, invoice_status):
     after_restart = make_service([AIMessage("Approved and refunded $150.00.")])
     assert [r["refund_id"] for r in after_restart.list_pending()] == [refund_id]
 
-    out = after_restart.decide_refund(refund_id, approved=True, reviewer="Riya")
+    out = after_restart.decide_refund(refund_id, approved=True, reviewer="Riya", note="Within policy.")
 
     assert out["refund"]["status"] == db.REFUNDED
     assert out["refund"]["processing_type"] == db.HUMAN_APPROVED
@@ -250,10 +256,22 @@ def test_reviewer_name_is_required(make_service):
     service = make_service(refund_script("INV-1004", 250.0))
     refund_id = service.submit_refund("INV-1004", "Broken.")["refund"]["refund_id"]
 
-    out = service.decide_refund(refund_id, approved=True, reviewer="   ")
+    out = service.decide_refund(refund_id, approved=True, reviewer="   ", note="Looks fine.")
 
     assert not out["ok"]
     assert service.get_refund(refund_id)["status"] == db.PENDING_APPROVAL
+
+
+@pytest.mark.parametrize("approved", [True, False])
+def test_reason_is_required_to_approve_or_decline(make_service, approved):
+    service = make_service(refund_script("INV-1004", 250.0))
+    refund_id = service.submit_refund("INV-1004", "Broken.")["refund"]["refund_id"]
+
+    out = service.decide_refund(refund_id, approved=approved, reviewer="Sam", note="  ")
+
+    assert not out["ok"]
+    assert "reason is required" in out["message"]
+    assert service.get_refund(refund_id)["status"] == db.PENDING_APPROVAL  # agent was not resumed
 
 
 def test_failed_resume_goes_back_to_the_queue_and_can_be_retried(make_service, invoice_status, monkeypatch):
@@ -267,14 +285,14 @@ def test_failed_resume_goes_back_to_the_queue_and_can_be_retried(make_service, i
 
     monkeypatch.setattr(db, "mark_invoice_refunded", fail_once)
 
-    out = service.decide_refund(refund_id, approved=True, reviewer="Sam")
+    out = service.decide_refund(refund_id, approved=True, reviewer="Sam", note="Damage confirmed.")
 
     assert not out["ok"]
     assert out["refund"]["status"] == db.PENDING_APPROVAL  # transaction rolled back, claim released
     assert out["refund"]["processed_at"] is None
     assert invoice_status("INV-1005") == db.PAID
 
-    out = service.decide_refund(refund_id, approved=True, reviewer="Sam")
+    out = service.decide_refund(refund_id, approved=True, reviewer="Sam", note="Damage confirmed.")
 
     assert out["refund"]["status"] == db.REFUNDED
     assert invoice_status("INV-1005") == db.INVOICE_REFUNDED
