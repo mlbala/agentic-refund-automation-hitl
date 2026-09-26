@@ -7,7 +7,6 @@ are shown with st.text (plain text), never rendered as Markdown.
 """
 
 import logging
-from collections import Counter
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
@@ -170,45 +169,73 @@ def render_metrics(service: RefundService) -> None:
     cols[4].metric("Declined (reviewer / agent)", m["rejected"] + m["declined"])
 
 
-def render_invoice_date_filter(service: RefundService, all_invoices: list[dict]) -> date | None:
-    """Invoice date picker (None = all dates), plus a button to queue that date's invoices at once."""
-    per_date = Counter(inv["invoice_date"] for inv in all_invoices)
+def clear_invoice_date() -> None:
+    st.session_state["invoice_date_filter"] = None
 
-    def label(d: date | None) -> str:
-        if d is None:
-            return f"All dates ({len(all_invoices)} invoices)"
-        return f"{d:%Y-%m-%d} ({per_date[d]} invoice{'s' if per_date[d] != 1 else ''})"
 
-    date_col, bulk_col = st.columns([1, 2], vertical_alignment="bottom")
-    chosen = date_col.selectbox(
+def render_invoice_date_filter(service: RefundService, all_invoices: list[dict]) -> tuple[date | None, list[dict]]:
+    """Calendar to pick an invoice date (empty = all dates). Returns (date, that date's invoices)."""
+    dates = [inv["invoice_date"] for inv in all_invoices]
+    date_col, info_col, all_col = st.columns([1, 2, 1], vertical_alignment="bottom")
+    chosen = date_col.date_input(
         "Invoice date",
-        [None, *sorted(per_date, reverse=True)],
-        format_func=label,
+        value=None,
+        min_value=min(dates, default=None),
+        max_value=max([*dates, utc_today()]),
+        format="YYYY-MM-DD",
         key="invoice_date_filter",
-        help="Show only invoices from this date.",
+        help="Pick a date to see only that day's invoices. Leave empty for all dates.",
     )
-    if chosen is not None:
-        if bulk_col.button(
-            f"Queue all invoices from {chosen:%Y-%m-%d}",
-            icon="📥",
-            help="Queues a refund request for each paid invoice from this date. Already refunded or "
-            "already requested invoices are skipped. Then use ▶ Process in the Queue tab.",
-        ):
-            out = service.queue_invoices_from(chosen)
-            flash(out["ok"], out["message"])
-            st.session_state.pop("last_outcome", None)
-            st.session_state["active_tab"] = QUEUE_TAB
-            st.rerun()
-    return chosen
+    if chosen is None:
+        info_col.caption(f"Showing all {len(all_invoices)} invoices. Pick a date to filter.")
+        return None, all_invoices
+
+    day_invoices = [inv for inv in all_invoices if inv["invoice_date"] == chosen]
+    all_col.button("All dates", icon="✖️", on_click=clear_invoice_date, help="Clear the date filter")
+    if not day_invoices:
+        info_col.caption(f"No invoices dated {chosen:%Y-%m-%d}.")
+        return chosen, []
+
+    paid = sum(inv["payment_status"] == db.PAID for inv in day_invoices)
+    info_col.caption(f"{len(day_invoices)} invoice(s) on {chosen:%Y-%m-%d} · {paid} paid")
+    st.dataframe(
+        pd.DataFrame(
+            [
+                {
+                    "Invoice": inv["invoice_id"],
+                    "Customer": inv["customer_name"],
+                    "Item": inv["item"],
+                    "Qty": inv["quantity"],
+                    "Amount": money(inv["amount"]),
+                    "Payment status": inv["payment_status"],
+                }
+                for inv in day_invoices
+            ]
+        ),
+        hide_index=True,
+    )
+    if st.button(
+        f"Queue all invoices from {chosen:%Y-%m-%d}",
+        icon="📥",
+        disabled=paid == 0,
+        help="Queues a refund request for each paid invoice from this date. Already refunded or "
+        "already requested invoices are skipped. Then use ▶ Process in the Queue tab.",
+    ):
+        out = service.queue_invoices_from(chosen)
+        flash(out["ok"], out["message"])
+        st.session_state.pop("last_outcome", None)
+        st.session_state["active_tab"] = QUEUE_TAB
+        st.rerun()
+    return chosen, day_invoices
 
 
 def render_new_request(service: RefundService) -> None:
     st.subheader("New refund request")
-    all_invoices = service.list_invoices()
-    chosen_date = render_invoice_date_filter(service, all_invoices)
-    invoices = {
-        inv["invoice_id"]: inv for inv in all_invoices if chosen_date is None or inv["invoice_date"] == chosen_date
-    }
+    _, shown = render_invoice_date_filter(service, service.list_invoices())
+    invoices = {inv["invoice_id"]: inv for inv in shown}
+    if not invoices:
+        st.info("Pick another date, or click **All dates** to see every invoice.")
+        return
     with st.form("new_request", clear_on_submit=True):
         invoice_id = st.selectbox("Invoice", list(invoices), format_func=lambda i: invoice_label(invoices[i]))
         message = st.text_area(
