@@ -1,0 +1,34 @@
+[project]
+name = "refund-automation-agent"
+version = "0.1.0"
+description = "LangGraph ReAct refund agent with human-in-the-loop approval, Streamlit UI and PostgreSQL."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = [
+    "langgraph>=1.2",
+    "langchain>=1.4",
+    "langchain-openai>=1.6",
+    "langgraph-checkpoint-postgres>=3.1",
+    "psycopg[binary,pool]>=3.3",
+    "sqlalchemy>=2.0",
+    "streamlit>=1.64",
+    "python-dotenv>=1.0",
+]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/refund_agent"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = [
+    # SQLite has no native DECIMAL; tests accept SQLAlchemy's float conversion.
+    "ignore:Dialect sqlite\\+pysqlite does \\*not\\* support Decimal objects natively",
+]
