@@ -236,6 +236,16 @@ def list_invoices(conn: Connection, invoice_date: date | None = None) -> list[di
     return [dict(row) for row in conn.execute(stmt).mappings()]
 
 
+def latest_refunds(conn: Connection, invoice_ids: Iterable[str]) -> dict[str, dict]:
+    """The most recent refund (refund_id, status) for each of these invoices that has one."""
+    stmt = (
+        select(refunds.c.invoice_id, refunds.c.refund_id, refunds.c.status)
+        .where(refunds.c.invoice_id.in_(list(invoice_ids)))
+        .order_by(refunds.c.created_at)
+    )
+    return {row["invoice_id"]: dict(row) for row in conn.execute(stmt).mappings()}  # later rows win
+
+
 def invoice_ids_with_refunds(conn: Connection, statuses: Iterable[str]) -> set[str]:
     """Invoices that have at least one refund in one of `statuses`."""
     stmt = select(refunds.c.invoice_id).where(refunds.c.status.in_(list(statuses))).distinct()

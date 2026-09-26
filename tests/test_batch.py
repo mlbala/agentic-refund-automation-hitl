@@ -100,6 +100,22 @@ def test_queue_all_invoices_from_a_date(batch_service):
     }
 
 
+def test_invoice_view_shows_each_invoices_latest_refund(batch_service):
+    day = date(2026, 9, 26)  # INV-1051 … INV-1060
+    batch_service.submit_refund("INV-1052", "Tips don't fit.")  # $12.99 -> refunded
+    batch_service.submit_refund("INV-1052", "Again please.")  # -> declined, and now the latest
+    queued = batch_service.queue_refund("INV-1053", "")["refund"]["refund_id"]
+
+    rows = {inv["invoice_id"]: inv for inv in batch_service.list_invoices_with_refunds(day)}
+
+    assert set(rows) == {f"INV-{n}" for n in range(1051, 1061)}
+    assert rows["INV-1052"]["latest_refund"]["status"] == db.DECLINED
+    assert rows["INV-1052"]["payment_status"] == db.INVOICE_REFUNDED
+    assert rows["INV-1053"]["latest_refund"] == {"invoice_id": "INV-1053", "refund_id": queued, "status": db.QUEUED}
+    assert rows["INV-1051"]["latest_refund"] is None
+    assert len(batch_service.list_invoices_with_refunds()) == 60  # no date = all invoices
+
+
 @pytest.mark.parametrize("message", ["", "   ", None])
 def test_customer_message_is_optional(batch_service, message):
     queued = batch_service.queue_refund("INV-1001", message)["refund"]

@@ -284,6 +284,13 @@ class RefundService:
         with self.engine.connect() as conn:
             return db.list_invoices(conn, invoice_date=invoice_date)
 
+    def list_invoices_with_refunds(self, invoice_date: date | None = None) -> list[dict]:
+        """Invoices (optionally one date's) with their latest refund, if any, as "latest_refund"."""
+        with self.engine.connect() as conn:
+            invoices = db.list_invoices(conn, invoice_date=invoice_date)
+            latest = db.latest_refunds(conn, [inv["invoice_id"] for inv in invoices])
+        return [inv | {"latest_refund": latest.get(inv["invoice_id"])} for inv in invoices]
+
     def get_refund(self, refund_id: str) -> dict | None:
         with self.engine.connect() as conn:
             return db.get_refund(conn, refund_id)
