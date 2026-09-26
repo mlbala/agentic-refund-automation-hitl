@@ -88,6 +88,8 @@ uv run streamlit run app.py
 | `REFUND_APPROVAL_THRESHOLD` | `100` | Amounts strictly above this need approval |
 | `LANGSMITH_TRACING`, `LANGSMITH_API_KEY` | `false` | Optional tracing |
 
+Prefer plain SQL? [scripts/schema.sql](scripts/schema.sql) creates the same tables (`invoices`, `refunds` and LangGraph's `checkpoints`, `checkpoint_blobs`, `checkpoint_writes`, `checkpoint_migrations`) and the demo invoices. Run it in psql or your provider's SQL console instead of `init_db.py`.
+
 `init_db.py` is idempotent: it creates the tables, seeds the eight demo invoices (INV-1001 … INV-1008) if they're missing, and runs `PostgresSaver.setup()`. To replay the demo from scratch, run `uv run python scripts/init_db.py --reset`. This deletes all refunds and their checkpoints and restores the seed invoice statuses.
 
 ## Demo script
