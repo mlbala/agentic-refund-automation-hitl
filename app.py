@@ -93,6 +93,7 @@ def invoice_label(invoice: dict) -> str:
     return (
         f"{invoice['invoice_id']} · {invoice['customer_name']} · "
         f"{money(invoice['amount'])} · {invoice['payment_status']} · {invoice['invoice_date']:%Y-%m-%d}"
+        + ("" if invoice["refundable"] else " · 🚫 non-refundable")
     )
 
 
@@ -147,7 +148,8 @@ def render_sidebar(threshold: Decimal, refund_window_days: int | None) -> str:
 5. **Approve** or **Decline** with a reason: the paused agent resumes and finishes the job.
 
 **Guardrails**, enforced in code, so nothing in a customer message can bypass them:
-the invoice must be paid and not already refunded, one refund per invoice, amount ≤ invoice,
+the invoice must be paid and not already refunded, non-refundable items (gift cards, licenses,
+final sale) are always declined, one refund per invoice, amount ≤ invoice,
 {f"requested within {refund_window_days} days of the invoice date" if refund_window_days else "no return window"},
 and a customer email, when given, must match the invoice.
 """
@@ -420,6 +422,7 @@ def render_invoices(service: RefundService) -> None:
                     "Qty": inv["quantity"],
                     "Amount": money(inv["amount"]),
                     "Payment status": inv["payment_status"],
+                    "Refundable": "Yes" if inv["refundable"] else "🚫 No",
                     "Latest refund": refund_cell(inv["latest_refund"]),
                 }
                 for inv in shown

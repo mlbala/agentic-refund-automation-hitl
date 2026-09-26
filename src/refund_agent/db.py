@@ -11,6 +11,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import (
+    Boolean,
     Column,
     Date,
     DateTime,
@@ -27,6 +28,7 @@ from sqlalchemy import (
     inspect,
     select,
     text,
+    true,
     update,
 )
 from sqlalchemy.engine import Connection, Engine
@@ -78,6 +80,8 @@ invoices = Table(
     Column("currency", Text, nullable=False, default="USD", server_default="USD"),
     Column("invoice_date", Date, nullable=False),
     Column("payment_status", Text, nullable=False),
+    # False for items that can never be refunded (gift cards, software licenses, final-sale clearance).
+    Column("refundable", Boolean, nullable=False, default=True, server_default=true()),
 )
 
 refunds = Table(
@@ -102,7 +106,7 @@ refunds = Table(
 )
 
 
-def _invoice(invoice_id, name, email, item, quantity, amount, invoice_date, status=PAID) -> dict:
+def _invoice(invoice_id, name, email, item, quantity, amount, invoice_date, status=PAID, refundable=True) -> dict:
     return {
         "invoice_id": invoice_id,
         "customer_name": name,
@@ -113,6 +117,7 @@ def _invoice(invoice_id, name, email, item, quantity, amount, invoice_date, stat
         "currency": "USD",
         "invoice_date": invoice_date,
         "payment_status": status,
+        "refundable": refundable,
     }
 
 
@@ -180,6 +185,11 @@ SEED_INVOICES = [
     _invoice("INV-1058", "Freya Nilsson", "freya.nilsson@example.com", "USB hub 7-port", 1, "39.99", date(2026, 9, 26)),
     _invoice("INV-1059", "Kwame Asante", "kwame.asante@example.com", "Noise-cancelling headset", 1, "219.00", date(2026, 9, 26)),
     _invoice("INV-1060", "Isla McDonald", "isla.mcdonald@example.com", "Laptop stand", 1, "45.00", date(2026, 9, 26)),
+    # Non-refundable items: the agent must always decline these, whatever the amount.
+    _invoice("INV-1061", "Oliver Grant", "oliver.grant@example.com", "Gift card ($50)", 1, "50.00", date(2026, 9, 24), refundable=False),
+    _invoice("INV-1062", "Zara Ahmed", "zara.ahmed@example.com", "Office suite license (1 year)", 1, "149.00", date(2026, 9, 24), refundable=False),
+    _invoice("INV-1063", "Nora Lindqvist", "nora.lindqvist@example.com", "Clearance: wireless mouse (final sale)", 1, "19.99", date(2026, 9, 24), refundable=False),
+    _invoice("INV-1064", "Samuel Osei", "samuel.osei@example.com", "Antivirus license (2 years)", 1, "59.99", date(2026, 9, 24), refundable=False),
 ]
 
 
@@ -194,17 +204,26 @@ def create_tables(engine: Engine) -> None:
     metadata.create_all(engine)
 
 
+# Columns added after the first release: (table, column, SQL type and default).
+_ADDED_COLUMNS = [
+    (refunds, "requester_email", "TEXT"),
+    (invoices, "refundable", "BOOLEAN NOT NULL DEFAULT TRUE"),
+]
+
+
 def upgrade_schema(engine: Engine) -> list[str]:
     """Add columns introduced after the first release to existing tables. Returns what was added.
 
     create_all() only creates missing tables; it never alters existing ones.
     """
-    existing = {column["name"] for column in inspect(engine).get_columns(refunds.name)}
+    inspector = inspect(engine)
     added = []
     with engine.begin() as conn:
-        if "requester_email" not in existing:  # table names are validated identifiers (config.py)
-            conn.execute(text(f"ALTER TABLE {refunds.name} ADD COLUMN requester_email TEXT"))
-            added.append(f"{refunds.name}.requester_email")
+        for table, column, sql_type in _ADDED_COLUMNS:
+            if column not in {c["name"] for c in inspector.get_columns(table.name)}:
+                # Table names are validated identifiers (config.py); the rest is constant.
+                conn.execute(text(f"ALTER TABLE {table.name} ADD COLUMN {column} {sql_type}"))
+                added.append(f"{table.name}.{column}")
     return added
 
 
@@ -227,7 +246,7 @@ def reset_demo_data(engine: Engine) -> list[str]:
             conn.execute(
                 update(invoices)
                 .where(invoices.c.invoice_id == row["invoice_id"])
-                .values(payment_status=row["payment_status"])
+                .values(payment_status=row["payment_status"], refundable=row["refundable"])
             )
     return refund_ids
 

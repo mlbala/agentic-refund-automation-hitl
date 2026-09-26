@@ -3,7 +3,7 @@
 from datetime import date, datetime, time, timezone
 
 import pytest
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, text
 from sqlalchemy.pool import StaticPool
 
 from refund_agent import db
@@ -101,6 +101,35 @@ def test_invalid_email_is_rejected_before_anything_is_saved(batch_service):
     assert batch_service.list_queued() == []
 
 
+# --- Non-refundable items ----------------------------------------------------------------
+
+
+def test_non_refundable_item_is_declined(batch_service, invoice_status):
+    out = batch_service.submit_refund("INV-1061", "I changed my mind about the gift card.")
+
+    refund = out["refund"]
+    assert refund["status"] == db.DECLINED
+    assert refund["agent_reason"] == "item 'Gift card ($50)' on invoice INV-1061 is non-refundable."
+    assert refund["amount"] is None
+    assert invoice_status("INV-1061") == db.PAID
+
+
+def test_non_refundable_item_over_the_threshold_never_reaches_a_reviewer(batch_service):
+    out = batch_service.submit_refund("INV-1062", "Please refund the license.")  # $149.00
+
+    assert out["refund"]["status"] == db.DECLINED
+    assert "is non-refundable" in out["refund"]["agent_reason"]
+    assert batch_service.list_pending() == []
+
+
+def test_queue_all_skips_non_refundable_items(batch_service):
+    # 2026-09-24: INV-1037 (already refunded), INV-1038 ($100, refundable), INV-1061..1064 (non-refundable)
+    out = batch_service.queue_invoices_from(date(2026, 9, 24))
+
+    assert [r["invoice_id"] for r in out["refunds"]] == ["INV-1038"]
+    assert "skipped 5" in out["message"]
+
+
 # --- Settings and schema upgrade ---------------------------------------------------------
 
 
@@ -114,12 +143,21 @@ def test_refund_window_setting_must_be_a_number():
         refund_window_days({"REFUND_WINDOW_DAYS": "thirty"})
 
 
-def test_upgrade_schema_adds_requester_email_to_an_existing_table():
+def test_upgrade_schema_adds_new_columns_to_existing_tables():
     engine = create_engine("sqlite+pysqlite://", poolclass=StaticPool)
     db.create_tables(engine)
-    with engine.begin() as conn:  # a refunds table from before this column existed
+    with engine.begin() as conn:  # tables from before these columns existed, with a row in them
         conn.execute(text(f"ALTER TABLE {db.refunds.name} DROP COLUMN requester_email"))
+        conn.execute(text(f"ALTER TABLE {db.invoices.name} DROP COLUMN refundable"))
+        conn.execute(
+            text(
+                f"INSERT INTO {db.invoices.name} (invoice_id, customer_name, customer_email, item, quantity, "
+                "amount, currency, invoice_date, payment_status) "
+                "VALUES ('INV-OLD', 'Old Row', 'old@example.com', 'Mouse', 1, 10, 'USD', '2026-09-01', 'paid')"
+            )
+        )
 
-    assert db.upgrade_schema(engine) == [f"{db.refunds.name}.requester_email"]
-    assert "requester_email" in {c["name"] for c in inspect(engine).get_columns(db.refunds.name)}
+    assert db.upgrade_schema(engine) == [f"{db.refunds.name}.requester_email", f"{db.invoices.name}.refundable"]
+    with engine.connect() as conn:
+        assert db.get_invoice(conn, "INV-OLD")["refundable"] is True  # existing rows stay refundable
     assert db.upgrade_schema(engine) == []  # idempotent

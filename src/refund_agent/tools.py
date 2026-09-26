@@ -67,6 +67,9 @@ def _check_rules(
         return f"invoice {invoice_id} does not exist."
     if invoice["payment_status"] != db.PAID:
         return f"invoice {invoice_id} is '{invoice['payment_status']}', not 'paid'."
+    # Guardrail: some items can never be refunded (gift cards, software licenses, final-sale clearance).
+    if not invoice["refundable"]:
+        return f"item '{invoice['item']}' on invoice {invoice_id} is non-refundable."
     # Guardrail: the person asking must be the invoice's customer (when the request says who asked).
     requester = (refund.get("requester_email") or "").strip().lower()
     if requester and requester != invoice["customer_email"].strip().lower():

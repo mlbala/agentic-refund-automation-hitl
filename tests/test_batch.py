@@ -85,7 +85,7 @@ def test_queue_all_invoices_from_a_date(batch_service):
     queued_invoices = {r["invoice_id"] for r in out["refunds"]}
     assert dated == {f"INV-{n}" for n in range(1039, 1051)}
     assert queued_invoices == dated - {"INV-1043", "INV-1047"}  # skips already requested + already refunded
-    assert out["message"] == "Queued 10 invoice(s) from 2026-09-25; skipped 2 already refunded or already requested."
+    assert out["message"] == "Queued 10 invoice(s) from 2026-09-25; skipped 2 already refunded, already requested or non-refundable."
     assert batch_service.queue_invoices_from(day)["refunds"] == []  # a second click adds nothing
 
     results = batch_service.process_day(db.utcnow().date())
@@ -113,7 +113,7 @@ def test_invoice_view_shows_each_invoices_latest_refund(batch_service):
     assert rows["INV-1052"]["payment_status"] == db.INVOICE_REFUNDED
     assert rows["INV-1053"]["latest_refund"] == {"invoice_id": "INV-1053", "refund_id": queued, "status": db.QUEUED}
     assert rows["INV-1051"]["latest_refund"] is None
-    assert len(batch_service.list_invoices_with_refunds()) == 60  # no date = all invoices
+    assert len(batch_service.list_invoices_with_refunds()) == 64  # no date = all invoices
 
 
 @pytest.mark.parametrize("message", ["", "   ", None])
