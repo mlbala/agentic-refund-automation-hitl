@@ -152,6 +152,27 @@ SEED_INVOICES = [
     _invoice("INV-1038", "Lucia Romano", "lucia.romano@example.com", "Stylus pen", 1, "100.00", date(2026, 9, 24)),
     _invoice("INV-1039", "Mohammed Ali", "mohammed.ali@example.com", "Gaming mouse", 1, "69.99", date(2026, 9, 25)),
     _invoice("INV-1040", "Nina Johansson", "nina.johansson@example.com", "Conference speakerphone", 1, "249.00", date(2026, 9, 25)),
+    # Recent invoices (2026-09-25 and 2026-09-26): 9 automatic, 9 needing approval, 2 already refunded.
+    _invoice("INV-1041", "Priya Sharma", "priya.sharma@example.com", "Bluetooth keyboard", 1, "49.99", date(2026, 9, 25)),
+    _invoice("INV-1042", "Lucas Moreau", "lucas.moreau@example.com", "4K webcam", 1, "159.00", date(2026, 9, 25)),
+    _invoice("INV-1043", "Amara Okafor", "amara.okafor@example.com", "Laptop backpack", 1, "64.50", date(2026, 9, 25)),
+    _invoice("INV-1044", "Daniel Kowalski", "daniel.kowalski@example.com", "Mechanical keyboard", 1, "139.99", date(2026, 9, 25)),
+    _invoice("INV-1045", "Sofia Hernandez", "sofia.hernandez@example.com", "USB-C charger 65W", 2, "79.98", date(2026, 9, 25)),
+    _invoice("INV-1046", "Arjun Mehta", "arjun.mehta@example.com", '27" 4K monitor', 1, "379.00", date(2026, 9, 25)),
+    _invoice("INV-1047", "Chen Wei", "chen.wei@example.com", "Wireless charging pad", 1, "29.99", date(2026, 9, 25), INVOICE_REFUNDED),
+    _invoice("INV-1048", "Hannah Fischer", "hannah.fischer@example.com", "Ergonomic mouse", 1, "99.99", date(2026, 9, 25)),
+    _invoice("INV-1049", "Mateo Ruiz", "mateo.ruiz@example.com", "Desk shelf", 1, "100.00", date(2026, 9, 25)),
+    _invoice("INV-1050", "Aisha Bello", "aisha.bello@example.com", "Smartwatch", 1, "249.00", date(2026, 9, 25)),
+    _invoice("INV-1051", "Ravi Kumar", "ravi.kumar@example.com", "Portable monitor", 1, "189.99", date(2026, 9, 26)),
+    _invoice("INV-1052", "Emily Clarke", "emily.clarke@example.com", "Earbud tips (3-pack)", 1, "12.99", date(2026, 9, 26)),
+    _invoice("INV-1053", "Tomas Horvat", "tomas.horvat@example.com", "NAS drive enclosure", 1, "299.00", date(2026, 9, 26)),
+    _invoice("INV-1054", "Leila Nasser", "leila.nasser@example.com", "Monitor light bar", 1, "55.00", date(2026, 9, 26)),
+    _invoice("INV-1055", "Benjamin Scott", "benjamin.scott@example.com", "Office chair cushion", 2, "70.00", date(2026, 9, 26)),
+    _invoice("INV-1056", "Mei Suzuki", "mei.suzuki@example.com", "Drawing tablet", 1, "129.00", date(2026, 9, 26), INVOICE_REFUNDED),
+    _invoice("INV-1057", "Gabriel Costa", "gabriel.costa@example.com", "SSD 2TB", 1, "169.00", date(2026, 9, 26)),
+    _invoice("INV-1058", "Freya Nilsson", "freya.nilsson@example.com", "USB hub 7-port", 1, "39.99", date(2026, 9, 26)),
+    _invoice("INV-1059", "Kwame Asante", "kwame.asante@example.com", "Noise-cancelling headset", 1, "219.00", date(2026, 9, 26)),
+    _invoice("INV-1060", "Isla McDonald", "isla.mcdonald@example.com", "Laptop stand", 1, "45.00", date(2026, 9, 26)),
 ]
 
 

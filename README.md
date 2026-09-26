@@ -61,7 +61,7 @@ Refund statuses: (`queued` →) `submitted` → `pending_approval` → `deciding
 
 The `refunds` table starts **empty**: only `invoices` is seeded. The app writes to `refunds` as requests come in. Each **Process now** or **Add to queue** click creates one row, and the row is updated as the refund moves along.
 
-A queued request starts as `status = queued`, and the agent doesn't see it yet. In the *Queue* tab you pick a day (UTC) and click **▶ Process N requests**. Each of that day's queued requests is claimed atomically (`queued → submitted`), so two clicks never process one request twice. From there it follows the steps below, from step 2 on. Refunds of $100.00 or more still stop in *Pending approval*.
+A queued request starts as `status = queued`, and the agent doesn't see it yet. In the *Queue* tab you pick a day (UTC) and click **▶ Process N requests**. The day is when the request was queued (`refunds.created_at`), not the invoice date. Each of that day's queued requests is claimed atomically (`queued → submitted`), so two clicks never process one request twice. From there it follows the steps below, from step 2 on. Refunds of $100.00 or more still stop in *Pending approval*.
 
 Example: **INV-1010 · Jamal Wright · Portable SSD · $119.99**, which is above the $99.99 threshold.
 
@@ -160,7 +160,7 @@ streamlit run app.py
 
 Prefer plain SQL? [scripts/schema.sql](scripts/schema.sql) creates the same tables (`invoices`, `refunds` and LangGraph's `checkpoints`, `checkpoint_blobs`, `checkpoint_writes`, `checkpoint_migrations`) and the demo invoices. Run it in psql or your provider's SQL console instead of `init_db.py`.
 
-`init_db.py` is idempotent: it creates the tables, seeds the 40 demo invoices (INV-1001 … INV-1040) if they're missing, and runs `PostgresSaver.setup()`. To replay the demo from scratch, run `uv run python scripts/init_db.py --reset`. This deletes all refunds and their checkpoints and restores the seed invoice statuses.
+`init_db.py` is idempotent: it creates the tables, seeds the 60 demo invoices (INV-1001 … INV-1060) if they're missing, and runs `PostgresSaver.setup()`. To replay the demo from scratch, run `uv run python scripts/init_db.py --reset`. This deletes all refunds and their checkpoints and restores the seed invoice statuses.
 
 ## Demo script
 
