@@ -47,6 +47,8 @@ FAILED = "failed"
 PROCESSED_STATUSES = (REFUNDED, REJECTED, DECLINED, FAILED)
 # While a refund is in one of these states, no other refund may target the same invoice.
 BLOCKING_STATUSES = (PENDING_APPROVAL, DECIDING, REFUNDED)
+# An invoice with a refund in one of these states is already taken care of (bulk queuing skips it).
+ACTIVE_STATUSES = (QUEUED, SUBMITTED, PENDING_APPROVAL, DECIDING, REFUNDED)
 
 # Processing types and the decided_by value for automatic decisions.
 STP = "stp"
@@ -227,9 +229,17 @@ def get_invoice(conn: Connection, invoice_id: str) -> dict | None:
     return _one(conn, select(invoices).where(invoices.c.invoice_id == invoice_id))
 
 
-def list_invoices(conn: Connection) -> list[dict]:
-    rows = conn.execute(select(invoices).order_by(invoices.c.invoice_id)).mappings()
-    return [dict(row) for row in rows]
+def list_invoices(conn: Connection, invoice_date: date | None = None) -> list[dict]:
+    stmt = select(invoices).order_by(invoices.c.invoice_id)
+    if invoice_date is not None:
+        stmt = stmt.where(invoices.c.invoice_date == invoice_date)
+    return [dict(row) for row in conn.execute(stmt).mappings()]
+
+
+def invoice_ids_with_refunds(conn: Connection, statuses: Iterable[str]) -> set[str]:
+    """Invoices that have at least one refund in one of `statuses`."""
+    stmt = select(refunds.c.invoice_id).where(refunds.c.status.in_(list(statuses))).distinct()
+    return set(conn.scalars(stmt))
 
 
 def get_refund(conn: Connection, refund_id: str) -> dict | None:

@@ -109,6 +109,22 @@ class RefundService:
             created["message"] = self.describe(created["refund"])
         return created
 
+    def queue_invoices_from(self, invoice_date: date, customer_message: str = "") -> dict:
+        """Queue a refund request for every invoice dated `invoice_date` that still needs one.
+
+        Skips invoices that are not 'paid' or already have a refund queued, in progress or done,
+        so clicking twice doesn't create duplicates. Returns {"ok", "message", "refunds"}.
+        """
+        with self.engine.connect() as conn:
+            invoices = db.list_invoices(conn, invoice_date=invoice_date)
+            taken = db.invoice_ids_with_refunds(conn, db.ACTIVE_STATUSES)
+        eligible = [inv for inv in invoices if inv["payment_status"] == db.PAID and inv["invoice_id"] not in taken]
+        queued = [self.queue_refund(inv["invoice_id"], customer_message)["refund"] for inv in eligible]
+        message = f"Queued {len(queued)} invoice(s) from {invoice_date:%Y-%m-%d}"
+        if skipped := len(invoices) - len(queued):
+            message += f"; skipped {skipped} already refunded or already requested"
+        return {"ok": True, "message": message + ".", "refunds": queued}
+
     def process_queued(self, refund_id: str) -> dict:
         """Run the agent on one queued request."""
         # Claim: queued -> submitted. Atomic, so two batch runs never process the same request.
@@ -264,9 +280,9 @@ class RefundService:
 
     # --- Reads for the UI ------------------------------------------------------
 
-    def list_invoices(self) -> list[dict]:
+    def list_invoices(self, invoice_date: date | None = None) -> list[dict]:
         with self.engine.connect() as conn:
-            return db.list_invoices(conn)
+            return db.list_invoices(conn, invoice_date=invoice_date)
 
     def get_refund(self, refund_id: str) -> dict | None:
         with self.engine.connect() as conn:

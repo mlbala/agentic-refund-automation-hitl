@@ -1,6 +1,6 @@
 """Queued requests and the per-day batch run (Process button)."""
 
-from datetime import timedelta
+from datetime import date, timedelta
 
 import pytest
 
@@ -73,6 +73,31 @@ def test_queued_request_is_processed_only_once(batch_service):
     assert not second["ok"]
     assert "already processed" in second["message"]
     assert batch_service.metrics()["stp"] == 1
+
+
+def test_queue_all_invoices_from_a_date(batch_service):
+    day = date(2026, 9, 25)  # INV-1039 … INV-1050; INV-1047 is already refunded
+    dated = {inv["invoice_id"] for inv in batch_service.list_invoices(invoice_date=day)}
+    already_queued = batch_service.queue_refund("INV-1043", "Backpack strap broke.")["refund"]["refund_id"]
+
+    out = batch_service.queue_invoices_from(day)
+
+    queued_invoices = {r["invoice_id"] for r in out["refunds"]}
+    assert dated == {f"INV-{n}" for n in range(1039, 1051)}
+    assert queued_invoices == dated - {"INV-1043", "INV-1047"}  # skips already requested + already refunded
+    assert out["message"] == "Queued 10 invoice(s) from 2026-09-25; skipped 2 already refunded or already requested."
+    assert batch_service.queue_invoices_from(day)["refunds"] == []  # a second click adds nothing
+
+    results = batch_service.process_day(db.utcnow().date())
+
+    by_status = {}
+    for r in results:
+        by_status.setdefault(r["refund"]["status"], set()).add(r["refund"]["invoice_id"])
+    assert len(results) == 11 and already_queued in {r["refund"]["refund_id"] for r in results}
+    assert by_status == {
+        db.REFUNDED: {"INV-1039", "INV-1041", "INV-1043", "INV-1045", "INV-1048"},  # ≤ $99.99
+        db.PENDING_APPROVAL: {"INV-1040", "INV-1042", "INV-1044", "INV-1046", "INV-1049", "INV-1050"},  # ≥ $100
+    }
 
 
 @pytest.mark.parametrize("message", ["", "   ", None])
