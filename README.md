@@ -59,7 +59,7 @@ Refund statuses: `submitted` → `pending_approval` → `deciding` → `refunded
 - **Idempotent resume.** On resume LangGraph runs the tool again *from the top*. Everything before `interrupt()` is either read-only or a compare-and-set update (`… WHERE status = 'submitted'`), so the re-run writes nothing. Money moves only after the decision, in **one transaction** that sets the refund to `refunded` (conditionally) and the invoice to `refunded` (only if it is still `paid`).
 - **Atomic claim.** `decide_refund` first runs `UPDATE … SET status='deciding' WHERE status='pending_approval'`. If two reviewers click at once, only one update changes a row, so only one of them resumes the agent. The other gets "already decided". If the resume fails, the claim is released back to `pending_approval` so the decision can be retried.
 - **The database is the source of truth.** After every run the service re-reads the refund row; it never parses the LLM's text to find out what happened. If the agent ends without moving the refund forward, the refund is marked `declined`. A refund that already went through is never overwritten with `failed`, even if the LLM errors afterwards.
-- **No secrets in the repo or logs.** `.env` is git-ignored, and `DATABASE_URL` and API keys are never printed.
+- **No secrets in the repo or logs.** `.env` is git-ignored, and the database password, the connection URL built from it and API keys are never printed.
 
 ## Setup
 
@@ -67,7 +67,7 @@ You need Python 3.12+, [uv](https://docs.astral.sh/uv/), a PostgreSQL database (
 
 ```bash
 uv sync
-cp .env.example .env        # then fill in DATABASE_URL and OPENAI_API_KEY
+cp .env.example .env        # then fill in the DB_* values and OPENAI_API_KEY
 uv run python scripts/init_db.py
 uv run streamlit run app.py
 ```
@@ -76,7 +76,13 @@ uv run streamlit run app.py
 
 | Variable | Example | Notes |
 |---|---|---|
-| `DATABASE_URL` | `postgresql://refund_app:<password>@<host>:5432/refunds?sslmode=require` | Used by SQLAlchemy (as `postgresql+psycopg://`) and by the checkpointer |
+| `DB_HOST` | `db.example.com` | Postgres server (remote) |
+| `DB_PORT` | `5432` | Optional, defaults to 5432 |
+| `DB_NAME` | `refunds` | Database name |
+| `DB_USER` | `refund_app` | Database user |
+| `DB_PASSWORD` | `…` | Any characters; it's URL-encoded for you |
+| `DB_SSLMODE` | `require` | Optional, defaults to `require` |
+| `DATABASE_URL` | `postgresql://refund_app:<password>@<host>:5432/refunds?sslmode=require` | Optional; a full URL that overrides the `DB_*` values |
 | `OPENAI_API_KEY` | `sk-…` | Needed by the default model |
 | `LLM_MODEL` | `openai:gpt-5-mini` | Any `init_chat_model` string, e.g. `anthropic:claude-sonnet-5` (install that provider's package) |
 | `REFUND_APPROVAL_THRESHOLD` | `100` | Amounts strictly above this need approval |
