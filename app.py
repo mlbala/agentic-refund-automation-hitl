@@ -7,7 +7,7 @@ are shown with st.text (plain text), never rendered as Markdown.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 import pandas as pd
@@ -26,15 +26,19 @@ logging.getLogger("refund_agent").setLevel(logging.INFO)
 
 # status -> (label, badge color, dot for tables)
 STATUS_STYLES = {
+    db.QUEUED: ("Queued", "gray", "⏳"),
     db.SUBMITTED: ("Submitted", "blue", "🔵"),
     db.PENDING_APPROVAL: ("Pending approval", "orange", "🟠"),
     db.DECIDING: ("Deciding", "blue", "🔵"),
     db.REFUNDED: ("Refunded", "green", "🟢"),
-    db.REJECTED: ("Rejected", "red", "🔴"),
-    db.DECLINED: ("Declined", "gray", "⚪"),
+    db.REJECTED: ("Declined (reviewer)", "red", "🔴"),
+    db.DECLINED: ("Declined (agent)", "gray", "⚪"),
     db.FAILED: ("Failed", "violet", "🟣"),
 }
 PROCESSING_LABELS = {db.STP: "STP", db.HUMAN_APPROVED: "Human-approved"}
+
+# Tab keys; the app switches to the tab where the last action's result shows up.
+QUEUE_TAB, PENDING_TAB, PROCESSED_TAB = "queue", "pending", "processed"
 
 
 @st.cache_resource(show_spinner="Connecting to the database…")
@@ -56,12 +60,18 @@ def money(value) -> str:
     return "—" if value is None else f"${Decimal(value):,.2f}"
 
 
-def when(value: datetime | None) -> str:
-    if value is None:
-        return "—"
+def as_utc(value: datetime) -> datetime:
     if value.tzinfo is None:  # SQLite returns naive datetimes; we always store UTC
         value = value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    return value.astimezone(timezone.utc)
+
+
+def when(value: datetime | None) -> str:
+    return "—" if value is None else as_utc(value).strftime("%Y-%m-%d %H:%M UTC")
+
+
+def utc_today() -> date:
+    return datetime.now(timezone.utc).date()
 
 
 def status_badge(status: str) -> None:
@@ -86,6 +96,28 @@ def invoice_label(invoice: dict) -> str:
     )
 
 
+def decision_reason(refund: dict) -> str:
+    """Why a refund ended the way it did: the reviewer's reason for human decisions, else the agent's."""
+    if refund["status"] == db.REJECTED or refund["processing_type"] == db.HUMAN_APPROVED:
+        return refund["reviewer_note"] or ""
+    if refund["status"] == db.FAILED:
+        return refund["agent_summary"] or ""
+    return refund["agent_reason"] or ""
+
+
+def tab_for(refund: dict | None) -> str:
+    """The tab where this refund now shows up."""
+    if refund is None or refund["status"] == db.QUEUED:
+        return QUEUE_TAB
+    if refund["status"] == db.PENDING_APPROVAL:
+        return PENDING_TAB
+    return PROCESSED_TAB
+
+
+def flash(ok: bool, message: str) -> None:
+    st.session_state["flash"] = ("success" if ok else "error", message)
+
+
 # --- Page sections -------------------------------------------------------------------
 
 
@@ -96,20 +128,21 @@ def render_sidebar(threshold: Decimal) -> str:
             "Your name",
             key="reviewer",
             placeholder="e.g. Sam Lee",
-            help="Required to approve or reject refunds. Saved as decided_by.",
+            help="Required to approve or decline refunds. Saved as decided_by.",
         ).strip()
         if not reviewer:
-            st.caption("Enter your name to approve or reject refunds.")
+            st.caption("Enter your name to approve or decline refunds.")
         st.divider()
         st.metric("Approval threshold", money(threshold))
         st.subheader("How it works")
         st.markdown(
             f"""
-1. A refund request arrives for an invoice.
+1. A refund request arrives for an invoice. **Process now**, or **Add to queue** and
+   process a whole day's queue at once from the *Queue* tab.
 2. The AI agent looks up the invoice, decides the amount and calls the refund tool.
 3. **{money(threshold)} or less** → refunded automatically (*straight-through processing*).
-4. **{approval_starts_at(threshold)} or more** → the agent pauses and waits here for a human (*maker-checker*).
-5. Approve or reject: the paused agent resumes and finishes the job.
+4. **{approval_starts_at(threshold)} or more** → the agent pauses and waits for a human (*maker-checker*).
+5. **Approve** or **Decline** with a reason: the paused agent resumes and finishes the job.
 
 The limits are enforced in code, so nothing in a customer message can bypass them.
 """
@@ -120,19 +153,20 @@ The limits are enforced in code, so nothing in a customer message can bypass the
 
 
 def render_flash() -> None:
-    flash = st.session_state.pop("flash", None)
-    if flash:
-        kind, text = flash
+    flash_message = st.session_state.pop("flash", None)
+    if flash_message:
+        kind, text = flash_message
         (st.success if kind == "success" else st.error)(text)
 
 
 def render_metrics(service: RefundService) -> None:
     m = service.metrics()
-    cols = st.columns(4)
-    cols[0].metric("Pending approval", m["pending"])
-    cols[1].metric("Auto-processed (STP)", m["stp"])
-    cols[2].metric("Human-approved", m["human_approved"])
-    cols[3].metric("Rejected / Declined", m["rejected"] + m["declined"])
+    cols = st.columns(5)
+    cols[0].metric("Queued", m["queued"])
+    cols[1].metric("Pending approval", m["pending"])
+    cols[2].metric("Auto-processed (STP)", m["stp"])
+    cols[3].metric("Human-approved", m["human_approved"])
+    cols[4].metric("Declined (reviewer / agent)", m["rejected"] + m["declined"])
 
 
 def render_new_request(service: RefundService) -> None:
@@ -144,14 +178,21 @@ def render_new_request(service: RefundService) -> None:
             "Customer message",
             placeholder="The monitor arrived with dead pixels. I'd like a refund, please.",
         )
-        submitted = st.form_submit_button("Submit to agent", type="primary")
+        now_col, queue_col, _ = st.columns([1, 1, 4])
+        process_now = now_col.form_submit_button("Process now", icon="⚡", type="primary")
+        add_to_queue = queue_col.form_submit_button("Add to queue", icon="📥")
 
-    if submitted:
+    if process_now or add_to_queue:
         if not message.strip():
             st.warning("Please enter the customer's message.")
         else:
-            with st.spinner("Agent is processing…"):
-                st.session_state["last_outcome"] = service.submit_refund(invoice_id, message)
+            if process_now:
+                with st.spinner("Agent is processing…"):
+                    outcome = service.submit_refund(invoice_id, message)
+            else:
+                outcome = service.queue_refund(invoice_id, message)
+            st.session_state["last_outcome"] = outcome
+            st.session_state["active_tab"] = tab_for(outcome["refund"])
             st.rerun()  # refresh metrics and tabs with the new state
 
     outcome = st.session_state.get("last_outcome")
@@ -167,10 +208,79 @@ def render_outcome(outcome: dict) -> None:
             return
         status_badge(refund["status"])
         st.markdown(f"**{refund['refund_id']}** · {refund['invoice_id']} · {money(refund['amount'])}")
-        st.write(outcome["message"])
+        st.text(outcome["message"])
         if refund["agent_summary"]:
             st.caption("Agent summary")
             st.text(refund["agent_summary"])
+
+
+def render_queue(service: RefundService) -> None:
+    left, right = st.columns([1, 3])
+    day = left.date_input("Day (UTC)", value=utc_today(), key="batch_day")
+    queued = service.list_queued(day)
+
+    other_days: dict[date, int] = {}
+    for r in service.list_queued():
+        created = as_utc(r["created_at"]).date()
+        if created != day:
+            other_days[created] = other_days.get(created, 0) + 1
+    if other_days:
+        right.caption(
+            "Also queued on: " + ", ".join(f"{d:%Y-%m-%d} ({n})" for d, n in sorted(other_days.items()))
+        )
+
+    results = st.session_state.pop("batch_results", None)
+    if results:
+        st.markdown("**Last batch run**")
+        st.dataframe(pd.DataFrame(results), hide_index=True)
+
+    if not queued:
+        st.info(f"No requests queued for {day:%Y-%m-%d}. Use **Add to queue** above to queue one.")
+        return
+
+    st.dataframe(
+        pd.DataFrame(
+            [
+                {
+                    "Refund ID": r["refund_id"],
+                    "Invoice": r["invoice_id"],
+                    "Customer": r["customer_name"],
+                    "Invoice amount": money(r["invoice_amount"]),
+                    "Customer message": r["customer_message"],
+                    "Queued at": when(r["created_at"]),
+                }
+                for r in queued
+            ]
+        ),
+        hide_index=True,
+    )
+    label = f"Process {len(queued)} request{'s' if len(queued) != 1 else ''} for {day:%Y-%m-%d}"
+    if st.button(label, icon="▶️", type="primary"):
+        progress = st.progress(0.0, text="Starting…")
+        log = st.container()
+        rows = []
+
+        def on_progress(done: int, total: int, result: dict) -> None:
+            refund = result["refund"] or {}
+            rows.append(
+                {
+                    "Refund ID": refund.get("refund_id", "—"),
+                    "Invoice": refund.get("invoice_id", "—"),
+                    "Amount": money(refund.get("amount")),
+                    "Outcome": status_text(refund.get("status", "")),
+                    "Details": result["message"],
+                }
+            )
+            log.text(f"{rows[-1]['Refund ID']} · {rows[-1]['Invoice']} → {rows[-1]['Outcome']}")
+            progress.progress(done / total, text=f"Processed {done} of {total}")
+
+        with st.spinner("Agent is processing the queue…"):
+            service.process_day(day, on_progress=on_progress)
+        st.session_state["batch_results"] = rows
+        waiting = sum(1 for row in rows if row["Outcome"] == status_text(db.PENDING_APPROVAL))
+        flash(True, f"Processed {len(rows)} queued request(s) for {day:%Y-%m-%d}; {waiting} need approval.")
+        st.session_state["active_tab"] = QUEUE_TAB
+        st.rerun()
 
 
 def render_pending(service: RefundService, pending: list[dict], reviewer: str) -> None:
@@ -209,18 +319,29 @@ def render_pending(service: RefundService, pending: list[dict], reviewer: str) -
                 st.caption("Agent reason")
                 st.text(r["agent_reason"] or "—")
 
-            note = st.text_input("Reviewer note", key=f"note_{rid}", placeholder="Why you approved or rejected")
-            approve_col, reject_col, _ = st.columns([1, 1, 4])
-            approve = approve_col.button("Approve", key=f"approve_{rid}", type="primary", disabled=not reviewer)
-            reject = reject_col.button("Reject", key=f"reject_{rid}", disabled=not reviewer)
+            # A form submits the reason together with the button click.
+            with st.form(f"decision_{rid}"):
+                reason = st.text_area(
+                    "Reason (required)",
+                    key=f"reason_{rid}",
+                    placeholder="Why you approve or decline this refund",
+                    height=80,
+                )
+                approve_col, decline_col, _ = st.columns([1, 1, 4])
+                approve = approve_col.form_submit_button("Approve", icon="✅", type="primary", disabled=not reviewer)
+                decline = decline_col.form_submit_button("Decline", icon="❌", disabled=not reviewer)
             if not reviewer:
-                st.caption("Enter your name in the sidebar to approve or reject.")
+                st.caption("Enter your name in the sidebar to approve or decline.")
 
-            if approve or reject:
-                with st.spinner("Resuming the agent…"):
-                    out = service.decide_refund(rid, approved=approve, reviewer=reviewer, note=note)
-                st.session_state["flash"] = ("success" if out["ok"] else "error", out["message"])
-                st.rerun()
+            if approve or decline:
+                if not reason.strip():
+                    st.error("Please enter a reason before approving or declining.")
+                else:
+                    with st.spinner("Resuming the agent…"):
+                        out = service.decide_refund(rid, approved=approve, reviewer=reviewer, note=reason)
+                    flash(out["ok"], out["message"])
+                    st.session_state["active_tab"] = tab_for(out["refund"]) if out["ok"] else PENDING_TAB
+                    st.rerun()
 
 
 def render_processed(processed: list[dict]) -> None:
@@ -237,7 +358,7 @@ def render_processed(processed: list[dict]) -> None:
                 "Status": status_text(r["status"]),
                 "Processing": PROCESSING_LABELS.get(r["processing_type"], "—"),
                 "Decided by": r["decided_by"] or "—",
-                "Note": r["reviewer_note"] or "",
+                "Reason": decision_reason(r),
                 "Decided at": when(r["decided_at"]),
                 "Agent summary": r["agent_summary"] or "",
             }
@@ -248,7 +369,7 @@ def render_processed(processed: list[dict]) -> None:
         table,
         hide_index=True,
         column_config={
-            "Note": st.column_config.TextColumn(width="medium"),
+            "Reason": st.column_config.TextColumn(width="large"),
             "Agent summary": st.column_config.TextColumn(width="large"),
         },
     )
@@ -274,8 +395,17 @@ def main() -> None:
     render_new_request(service)
     st.divider()
 
+    queued_count = len(service.list_queued())
     pending = service.list_pending()
-    pending_tab, processed_tab = st.tabs([f"Pending approval ({len(pending)})", "Processed"])
+    labels = {
+        QUEUE_TAB: f"Queue ({queued_count})",
+        PENDING_TAB: f"Pending approval ({len(pending)})",
+        PROCESSED_TAB: "Processed",
+    }
+    active = st.session_state.get("active_tab", PENDING_TAB)
+    queue_tab, pending_tab, processed_tab = st.tabs(list(labels.values()), default=labels[active])
+    with queue_tab:
+        render_queue(service)
     with pending_tab:
         render_pending(service, pending, reviewer)
     with processed_tab:
