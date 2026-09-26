@@ -27,6 +27,8 @@ from . import db
 logger = logging.getLogger(__name__)
 
 RECURSION_LIMIT = 12
+# Stored when a request comes without a customer message; the agent then refunds the full amount.
+NO_CUSTOMER_MESSAGE = "(no customer message)"
 
 
 def new_refund_id() -> str:
@@ -186,7 +188,7 @@ class RefundService:
     # --- Internals -------------------------------------------------------------
 
     def _create_refund(self, invoice_id: str, customer_message: str, status: str) -> dict:
-        customer_message = (customer_message or "").strip()
+        customer_message = (customer_message or "").strip() or NO_CUSTOMER_MESSAGE
         refund_id = new_refund_id()
         with self.engine.begin() as conn:
             if db.get_invoice(conn, invoice_id) is None:

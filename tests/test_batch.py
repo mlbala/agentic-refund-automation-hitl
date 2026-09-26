@@ -2,8 +2,10 @@
 
 from datetime import timedelta
 
+import pytest
+
 from refund_agent import db
-from refund_agent.service import run_config
+from refund_agent.service import NO_CUSTOMER_MESSAGE, run_config
 
 
 def test_queued_request_waits_without_running_the_agent(batch_service):
@@ -71,6 +73,17 @@ def test_queued_request_is_processed_only_once(batch_service):
     assert not second["ok"]
     assert "already processed" in second["message"]
     assert batch_service.metrics()["stp"] == 1
+
+
+@pytest.mark.parametrize("message", ["", "   ", None])
+def test_customer_message_is_optional(batch_service, message):
+    queued = batch_service.queue_refund("INV-1001", message)["refund"]
+    processed_now = batch_service.submit_refund("INV-1006", message)["refund"]
+
+    assert queued["customer_message"] == NO_CUSTOMER_MESSAGE
+    assert processed_now["customer_message"] == NO_CUSTOMER_MESSAGE
+    assert processed_now["status"] == db.REFUNDED
+    assert batch_service.process_queued(queued["refund_id"])["refund"]["status"] == db.REFUNDED
 
 
 def test_process_now_skips_the_queue(batch_service):

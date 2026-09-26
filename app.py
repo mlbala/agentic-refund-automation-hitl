@@ -175,25 +175,23 @@ def render_new_request(service: RefundService) -> None:
     with st.form("new_request", clear_on_submit=True):
         invoice_id = st.selectbox("Invoice", list(invoices), format_func=lambda i: invoice_label(invoices[i]))
         message = st.text_area(
-            "Customer message",
-            placeholder="The monitor arrived with dead pixels. I'd like a refund, please.",
+            "Customer message (optional)",
+            placeholder="e.g. The monitor arrived with dead pixels. I'd like a refund, please.",
+            help="Context for the agent and the reviewer. Without a message the agent refunds the full amount.",
         )
         now_col, queue_col, _ = st.columns([1, 1, 4])
         process_now = now_col.form_submit_button("Process now", icon="⚡", type="primary")
         add_to_queue = queue_col.form_submit_button("Add to queue", icon="📥")
 
     if process_now or add_to_queue:
-        if not message.strip():
-            st.warning("Please enter the customer's message.")
+        if process_now:
+            with st.spinner("Agent is processing…"):
+                outcome = service.submit_refund(invoice_id, message)
         else:
-            if process_now:
-                with st.spinner("Agent is processing…"):
-                    outcome = service.submit_refund(invoice_id, message)
-            else:
-                outcome = service.queue_refund(invoice_id, message)
-            st.session_state["last_outcome"] = outcome
-            st.session_state["active_tab"] = tab_for(outcome["refund"])
-            st.rerun()  # refresh metrics and tabs with the new state
+            outcome = service.queue_refund(invoice_id, message)
+        st.session_state["last_outcome"] = outcome
+        st.session_state["active_tab"] = tab_for(outcome["refund"])
+        st.rerun()  # refresh metrics and tabs with the new state
 
     outcome = st.session_state.get("last_outcome")
     if outcome:

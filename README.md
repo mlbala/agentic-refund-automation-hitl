@@ -67,7 +67,7 @@ Example: **INV-1010 · Jamal Wright · Portable SSD · $119.99**, which is above
 
 | Step | What happens | The `refunds` row |
 |---|---|---|
-| 1. Submit | In the UI you pick INV-1010, type the customer's message and click **Process now**. | New row: `refund_id = REF-3F9A1C2B`, `status = submitted`, `amount` empty |
+| 1. Submit | In the UI you pick INV-1010, optionally type the customer's message, and click **Process now**. | New row: `refund_id = REF-3F9A1C2B`, `status = submitted`, `amount` empty |
 | 2. Look up | The agent calls `get_invoice`, which only reads `invoices`. | No change |
 | 3. Decide | The agent calls `issue_refund(119.99, reason)`. The code checks the rules and sees $119.99 > $99.99. | `amount = 119.99`, `agent_reason` set, `status = pending_approval` |
 | 4. Pause | `interrupt()` stops the agent and its state is saved in the `checkpoint*` tables. The refund appears in *Pending approval*. | No change. It can wait there for days, even across app restarts. |
